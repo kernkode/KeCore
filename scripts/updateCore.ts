@@ -14,7 +14,6 @@ const GITHUB_REPO = 'KeCore';
 const BRANCH = 'main';
 
 // ─── CONFIGURACIÓN DE DIRECTORIOS ───────────────────────
-// Agrega o quita carpetas aquí fácilmente
 interface SyncFolder {
     remote: string;  // Path en el repo de GitHub
     local: string;   // Path destino en disco
@@ -29,11 +28,6 @@ const SYNC_FOLDERS: SyncFolder[] = [
         remote: 'scripts',
         local: './scripts'
     },
-    // Agrega más carpetas aquí:
-    // {
-    //     remote: 'resources/[standalone]/otro-recurso',
-    //     local: './resources/[standalone]/otro-recurso'
-    // },
 ];
 
 // ─── Tipos ───────────────────────────────────────────────
