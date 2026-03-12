@@ -97,14 +97,14 @@ async function getLocalGitSha(filePath: string): Promise<string | null> {
 
 // ─── Obtener TODO el árbol en UNA sola petición ──────────
 async function getFullTree(): Promise<TreeItem[]> {
-    console.log(chalk.cyan('🌳 Obteniendo árbol completo del repositorio (1 sola petición)...\n'));
+    console.log(chalk.cyan('🌳 Retrieving the complete repository tree (single request)...\n'));
 
     const response: AxiosResponse<TreeResponse> = await apiClient.get(
         `git/trees/${BRANCH}?recursive=1`
     );
 
     if (response.data.truncated) {
-        console.log(chalk.yellow('⚠️  Árbol truncado (repo muy grande). Algunos archivos podrían faltar.'));
+        console.log(chalk.yellow('⚠️  Truncated tree (very large repository). Some files may be missing..'));
     }
 
     return response.data.tree;
@@ -148,17 +148,17 @@ async function processFile(file: FileInfo): Promise<'intact' | 'updated' | 'new'
     const localSha = await getLocalGitSha(file.localPath);
 
     if (localSha === null) {
-        console.log(chalk.magenta(`    📥 [NUEVO]         ${file.remotePath}`));
+        console.log(chalk.magenta(`    📥 [NEW]         ${file.remotePath}`));
         await downloadFile(file.downloadUrl, file.localPath);
         return 'new';
     }
 
     if (localSha === file.sha) {
-        console.log(chalk.gray(`    ✅ [INTACTO]       ${file.remotePath}`));
+        console.log(chalk.gray(`    ✅ [INTACT]       ${file.remotePath}`));
         return 'intact';
     }
 
-    console.log(chalk.yellow(`    🔄 [ACTUALIZANDO]  ${file.remotePath}`));
+    console.log(chalk.yellow(`    🔄 [UPDATING]  ${file.remotePath}`));
     await downloadFile(file.downloadUrl, file.localPath);
     return 'updated';
 }
@@ -173,11 +173,11 @@ async function syncFolder(
     const stats: SyncStats = { intact: 0, updated: 0, new: 0 };
 
     if (files.length === 0) {
-        console.log(chalk.red(`  ❌ No se encontraron archivos en: ${folder.remote}\n`));
+        console.log(chalk.red(`  ❌ No files were found in: ${folder.remote}\n`));
         return stats;
     }
 
-    console.log(chalk.cyan(`  📂 ${files.length} archivos encontrados\n`));
+    console.log(chalk.cyan(`  📂 ${files.length} files found\n`));
 
     // Crear directorios necesarios
     const dirs = new Set(files.map(f => path.dirname(f.localPath)));
@@ -198,16 +198,16 @@ async function syncFolder(
 
 // ─── Main ────────────────────────────────────────────────
 async function main(): Promise<void> {
-    console.time(chalk.yellow('⏱️  Tiempo total'));
+    console.time(chalk.yellow('⏱️  Total time'));
 
     try {
         const folderList = SYNC_FOLDERS.map(f => f.remote).join(', ');
 
         console.log(chalk.cyan.bold(`
 ╔════════════════════════════════════════════════════╗
-║  📦 Sincronización Inteligente de KeCore            ║
-║  🔍 Comparando por SHA de Git (1 petición API)      ║
-║  📁 Carpetas: ${folderList.padEnd(36)}║
+║  📦 KeCore Smart Sync            ║
+║  🔍 Comparing by Git SHA (1 API request)      ║
+║  📁 Folders: ${folderList.padEnd(36)}║
 ╚════════════════════════════════════════════════════╝
         `));
 
@@ -234,18 +234,18 @@ async function main(): Promise<void> {
             totalFiles += folderTotal;
 
             console.log(chalk.blue(`│`));
-            console.log(chalk.blue(`└─ ✅ ${folderStats.intact} intactos | 🔄 ${folderStats.updated} actualizados | 📥 ${folderStats.new} nuevos`));
+            console.log(chalk.blue(`└─ ✅ ${folderStats.intact} intact | 🔄 ${folderStats.updated} Updated | 📥 ${folderStats.new} new`));
         }
 
         // ③ Resumen global
         console.log(chalk.green.bold(`
             ╔════════════════════════════════════════════════════╗
-            ║  🚀 ¡Sincronización completada!                    ║
+            ║  🚀 ¡Synchronization complete!                    ║
             ╠════════════════════════════════════════════════════╣
-            ║  📁 Carpetas:      ${String(SYNC_FOLDERS.length).padStart(4)}                            ║
-            ║  ✅ Intactos:      ${String(totalStats.intact).padStart(4)}                            ║
-            ║  🔄 Actualizados:  ${String(totalStats.updated).padStart(4)}                            ║
-            ║  📥 Nuevos:        ${String(totalStats.new).padStart(4)}                            ║
+            ║  📁 Folders:      ${String(SYNC_FOLDERS.length).padStart(4)}                            ║
+            ║  ✅ Intact:      ${String(totalStats.intact).padStart(4)}                            ║
+            ║  🔄 Updated:  ${String(totalStats.updated).padStart(4)}                            ║
+            ║  📥 New:        ${String(totalStats.new).padStart(4)}                            ║
             ║  📊 Total:         ${String(totalFiles).padStart(4)}                            ║
             ╚════════════════════════════════════════════════════╝
         `));
