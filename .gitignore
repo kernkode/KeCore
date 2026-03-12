@@ -1,0 +1,16 @@
+/artifacts
+/server-data/cache
+/node_modules
+package-lock.json
+server-data/.replxx_history
+.replxx_history
+/cache
+/.vscode
+/resources/\[KeCore\]/ts-server/dist
+/resources/\[KeCore\]/ts-client/dist
+*.rar
+start_17000_dev_server.bat
+resources/\[TopLeague\]/tl_inventory/dist/main.js
+resources/\[KeCore\]/shared/dist/main.js
+/txData
+server.cfg.bkp
