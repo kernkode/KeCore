@@ -240,13 +240,13 @@ async function main(): Promise<void> {
         // ③ Resumen global
         console.log(chalk.green.bold(`
             ╔════════════════════════════════════════════════════╗
-            ║  🚀 ¡Synchronization complete!                    ║
+            ║  🚀 ¡Synchronization complete!                     ║
             ╠════════════════════════════════════════════════════╣
-            ║  📁 Folders:      ${String(SYNC_FOLDERS.length).padStart(4)}                            ║
-            ║  ✅ Intact:      ${String(totalStats.intact).padStart(4)}                            ║
-            ║  🔄 Updated:  ${String(totalStats.updated).padStart(4)}                            ║
-            ║  📥 New:        ${String(totalStats.new).padStart(4)}                            ║
-            ║  📊 Total:         ${String(totalFiles).padStart(4)}                            ║
+            ║  📁 Folders: ${String(SYNC_FOLDERS.length).padStart(4)}                                  ║
+            ║  ✅ Intact: ${String(totalStats.intact).padStart(4)}                                   ║
+            ║  🔄 Updated: ${String(totalStats.updated).padStart(4)}                                  ║
+            ║  📥 New: ${String(totalStats.new).padStart(4)}                                      ║
+            ║  📊 Total: ${String(totalFiles).padStart(4)}                                    ║
             ╚════════════════════════════════════════════════════╝
         `));
 
