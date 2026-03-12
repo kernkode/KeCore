@@ -13,7 +13,7 @@ class Watcher {
     }
 
     start(): void {
-        log("Configurando watcher para cambios...");
+        log("Setting up watcher for changes...");
 
         this.watcher
             .on('change', (filePath: string) => {
@@ -22,10 +22,10 @@ class Watcher {
                 });
             })
             .on('error', (err: unknown | any) => {
-                log(`Error en Watcher: ${err.message}`, { textColor: chalk.red });
+                log(`Watcher error: ${err.message}`, { textColor: chalk.red });
             });
 
-        log("Entorno listo. Servidor corriendo y watchers activos.");
+        log("Environment ready. Server running and watchers active.");
     }
 
     close(): Promise<void> {

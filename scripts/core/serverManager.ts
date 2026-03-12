@@ -67,11 +67,11 @@ class ServerManager {
         }
     
         if (this.childProcess) {
-            log("Deteniendo servidor anterior...");
+            log("Stopping previous server...");
             await fkill(this.childProcess.pid!, { force: true, silent: true }).catch(() => {});
         }
     
-        log("Iniciando FXServer...", { textColor: chalk.hex('#1abc9c') });
+        log("Starting FXServer...", { textColor: chalk.hex('#1abc9c') });
     
         const SERVER_CFG_PATH = path.resolve('server.cfg');
         try {
@@ -106,12 +106,12 @@ class ServerManager {
             });
     
             this.childProcess.on('close', (code: number | null) => {
-                log(`Servidor cerrado (codigo ${code})`, { resourceColor: chalk.red });
+                log(`Server closed (code ${code})`, { resourceColor: chalk.red });
                 writeToLog(String(code));
             });
     
             this.childProcess.on('error', (err: Error) => {
-                log(`Error al iniciar el servidor: ${err.message}`, { resourceColor: chalk.red });
+                log(`Error starting the server: ${err.message}`, { resourceColor: chalk.red });
                 writeToLog(err.message);
                 process.exit(1);
             });
@@ -128,7 +128,7 @@ class ServerManager {
 
     async stop(): Promise<void> {
         if (this.childProcess && this.childProcess.pid) {
-            log("Deteniendo servidor...", { resourceColor: chalk.hex('#1abc9c') });
+            log("Stopping server...", { resourceColor: chalk.hex('#1abc9c') });
             await fkill(this.childProcess.pid, { force: true, silent: true }).catch(() => {});
         }
     }
@@ -138,17 +138,16 @@ class ServerManager {
         if (!this.isRunning() || !this.childProcess?.stdin) return;
         process.stdout.write(chalk.gray(`>> ${command}\n`));
         this.childProcess.stdin.write(`${command}\n`);
-        console.log("comando ejecutado");
     }
 
     async restart(): Promise<void> {
-        log("Iniciando reinicio completo del servidor...", { resourceColor: chalk.yellow });
+        log("Initiating full server reboot...", { resourceColor: chalk.yellow });
 
         // 1. Detener el servidor actual de manera más robusta
         if (this.isRunning()) {
             try {
                 this.Authenticated = false;
-                log("Enviando comando 'quit' al servidor...", { resourceColor: chalk.yellow });
+                log("Sending the 'quit' command to the server...", { resourceColor: chalk.yellow });
                 await this.sendCommand('quit');
 
                 // Esperar con timeout mejorado
@@ -163,15 +162,15 @@ class ServerManager {
                 await Promise.race([
                     exitPromise,
                     new Promise<void>((_, reject) => 
-                        setTimeout(() => reject(new Error('Timeout al detener el servidor')), 15000))
+                        setTimeout(() => reject(new Error('Timeout when stopping the server')), 15000))
                 ]);
 
             } catch (error: any) {
-                log(`Error al detener normalmente: ${error.message}`, { resourceColor: chalk.yellow });
+                log(`Error stopping normally: ${error.message}`, { resourceColor: chalk.yellow });
                 
                 // Fuerza el cierre de todos los procesos relacionados
                 try {
-                    log("Forzando cierre de procesos...", { resourceColor: chalk.yellow });
+                    log("Forcing the closure of processes...", { resourceColor: chalk.yellow });
                     if (this.childProcess?.pid) {
                         await fkill(this.childProcess.pid, { force: true, silent: true });
                     }
@@ -194,7 +193,7 @@ class ServerManager {
         const MAX_WAIT_TIME = 30000; // 30 segundos máximo
         let elapsed = 0;
         
-        log("Verificando estado del puerto...", { resourceColor: chalk.yellow });
+        log("Checking port status...", { resourceColor: chalk.yellow });
         
         while (elapsed < MAX_WAIT_TIME) {
             const tcpInUse = await isPortInUse(this.tcp_port);
@@ -206,15 +205,15 @@ class ServerManager {
             
             await new Promise(resolve => setTimeout(resolve, PORT_CHECK_INTERVAL));
             elapsed += PORT_CHECK_INTERVAL;
-            log(`Esperando liberación del puerto... (${elapsed/1000}s)`, { resourceColor: chalk.yellow });
+            log(`Waiting for port release... (${elapsed/1000}s)`, { resourceColor: chalk.yellow });
         }
 
         if (elapsed >= MAX_WAIT_TIME) {
-            log("Advertencia: No se pudo liberar el puerto después de 30 segundos", { resourceColor: chalk.yellow });
+            log("Warning: The port could not be released after 30 seconds", { resourceColor: chalk.yellow });
         }
 
         // 3. Limpiar caches y contextos
-        log("Limpiando cachés...", { resourceColor: chalk.yellow });
+        log("Clearing caches...", { resourceColor: chalk.yellow });
         const disposePromises = Array.from(esbuildContexts.values()).map(ctx => ctx.dispose());
         await Promise.all(disposePromises);
         esbuildContexts.clear();
@@ -226,9 +225,9 @@ class ServerManager {
         // 5. Reiniciar el servidor
         try {
             await this.start();
-            log("Servidor reiniciado exitosamente", { resourceColor: chalk.green });
+            log("Server successfully restarted", { resourceColor: chalk.green });
         } catch (error: any) {
-            log(`Error crítico al reiniciar: ${error.message}`, { resourceColor: chalk.red });
+            log(`Critical error on restart: ${error.message}`, { resourceColor: chalk.red });
             throw error;
         }
     }
@@ -237,15 +236,15 @@ class ServerManager {
     async shutdown(): Promise<void> {
         if (this.isShuttingDown) return;
         this.isShuttingDown = true;
-        log("Cerrando servicios...");
+        log("Closing services...");
     
         const disposePromises = Array.from(esbuildContexts.values()).map(ctx => ctx.dispose());
         await Promise.all(disposePromises);
-        log("Contextos de compilacion limpiados.", { resourceColor: chalk.yellow });
+        log("Cleaned compilation contexts.", { resourceColor: chalk.yellow });
     
         if (this.isRunning() && this.childProcess?.pid) {
             await fkill(this.childProcess.pid, { force: true, silent: true });
-            log("Proceso del servidor terminado.", { resourceColor: chalk.yellow });
+            log("Server process completed.", { resourceColor: chalk.yellow });
         }
         process.exit(0);
     }
@@ -256,7 +255,7 @@ class ServerManager {
         pendingRestarts.add(resourceName);
         
         try {
-            log(`Reiniciando...`, { resourceName, resourceColor: chalk.yellow });
+            log(`Restarting...`, { resourceName, resourceColor: chalk.yellow });
             await this.sendCommand(`ensure ${resourceName}`);
         } finally {
             pendingRestarts.delete(resourceName);
@@ -273,7 +272,7 @@ class ServerManager {
                 data = configCache.get(serverCfgPath)!;
             } else {
                 if (!fs.existsSync(serverCfgPath)) {
-                    log(`server.cfg no encontrado en: ${serverCfgPath}`, { resourceColor: chalk.red });
+                    log(`server.cfg not found in: ${serverCfgPath}`, { resourceColor: chalk.red });
                     return;
                 }
                 data = fs.readFileSync(serverCfgPath, 'utf8');
@@ -311,7 +310,7 @@ class ServerManager {
             }
             
         } catch (err: any) {
-            console.error('Error al editar server.cfg:', err);
+            console.error('Error editing server.cfg:', err);
             configCache.delete(serverCfgPath); // Invalidar caché en caso de error
         }
     }

@@ -7,14 +7,14 @@ import { serverManager } from './serverManager.ts';
 import { log } from './logger.ts';
 import { API_CONFIG } from './configs.ts';
 
-// --- Tipos e Interfaces para mayor claridad ---
+// --- Types and Interfaces for clarity ---
 
-// Define la forma esperada del cuerpo de la solicitud para /restart
+// Defines the expected shape of the request body for /restart
 interface RestartRequestBody {
     reason?: string;
 }
 
-// --- Middleware de autenticación ---
+// --- Authentication Middleware ---
 function authenticate(req: Request, res: Response, next: NextFunction): void {
     const apiKey = req.headers['x-api-key'] as string;
     const ip = req.ip || req.socket.remoteAddress || '';
@@ -23,20 +23,20 @@ function authenticate(req: Request, res: Response, next: NextFunction): void {
     //const clientIP = regex.test(ip) ? ip.replace(regex, '') : ip;
     
     if (!API_CONFIG.apiKey) {
-        log('Error: API_KEY no está configurada en el archivo .env', { resourceColor: chalk.red });
-        res.status(500).json({ error: 'Configuración de API incorrecta' });
+        log('Error: API_KEY is not configured in the .env file', { resourceColor: chalk.red });
+        res.status(500).json({ error: 'Incorrect API configuration' });
         return;
     }
 
     if (!apiKey || apiKey !== API_CONFIG.apiKey) {
-        res.status(401).json({ error: 'API key inválida' });
+        res.status(401).json({ error: 'Invalid API key' });
         return;
     }
     
     next();
 }
 
-// --- Función para esperar con timeout ---
+// --- Function to wait with timeout ---
 async function waitWithTimeout(
     condition: () => Promise<boolean> | boolean,
     timeoutMs = 30000,
@@ -73,12 +73,12 @@ async function waitWithTimeout(
             resolve(false);
         }, timeoutMs);
 
-        // Iniciar la verificación inmediatamente
+        // Start the verification immediately
         checkCondition();
     });
 }
 
-// --- Iniciar el servidor API ---
+// --- Start the API server ---
 export async function startRestAPI(): Promise<Express> {
     const app: Express = express();
     
@@ -98,10 +98,10 @@ export async function startRestAPI(): Promise<Express> {
     app.post('/api/stop', authenticate, async (req: Request, res: Response) => {
         try {
             await serverManager.stop();
-            res.json({ success: true, message: 'Servidor detenido exitosamente' });
+            res.json({ success: true, message: 'Server stopped successfully' });
         } catch (error: unknown) {
             const message = error instanceof Error ? error.message : String(error);
-            log(`Error en API REST (stop): ${message}`, { resourceColor: chalk.red });
+            log(`Error in REST API (stop): ${message}`, { resourceColor: chalk.red });
             res.status(500).json({ error: message });
         }
     });
@@ -109,45 +109,45 @@ export async function startRestAPI(): Promise<Express> {
     app.post('/api/start', authenticate, async (req: Request, res: Response) => {
         try {
             await serverManager.start();
-            res.json({ success: true, message: 'Servidor iniciado exitosamente' });
+            res.json({ success: true, message: 'Server started successfully' });
         } catch (error: unknown) {
             const message = error instanceof Error ? error.message : String(error);
-            log(`Error en API REST (start): ${message}`, { resourceColor: chalk.red });
+            log(`Error in REST API (start): ${message}`, { resourceColor: chalk.red });
             res.status(500).json({ error: message });
         }
     });
     
     app.post('/api/restart', authenticate, async (req: Request<{}, {}, RestartRequestBody>, res: Response) => {
         if (!serverManager.isAutenticated()) {
-            return res.status(400).json({ error: 'El servidor no ha arrancado por completo.' });
+            return res.status(400).json({ error: 'The server has not fully started.' });
         }
         
         try {
-            const reason = req.body?.reason || 'Reinicio programado';
-            log(`Solicitud de reinicio recibida. Motivo: ${reason}`, { resourceColor: chalk.yellow });
+            const reason = req.body?.reason || 'Scheduled restart';
+            log(`Restart request received. Reason: ${reason}`, { resourceColor: chalk.yellow });
             
             await serverManager.restart();
 
             const isAuthenticated = await waitWithTimeout(() => serverManager.isAutenticated());
 
             if (!isAuthenticated) {
-                log('Timeout: El servidor no se autenticó en 30 segundos', { resourceColor: chalk.red });
+                log('Timeout: The server did not authenticate in 30 seconds', { resourceColor: chalk.red });
                 return res.status(408).json({ 
-                    error: 'Timeout: El servidor no completó el reinicio en el tiempo esperado',
+                    error: 'Timeout: The server did not complete the restart in the expected time',
                     partialSuccess: true,
                 });
             }
 
-            res.json({ success: true, message: 'Servidor reiniciado exitosamente' });
+            res.json({ success: true, message: 'Server restarted successfully' });
         } catch (error: unknown) {
             const message = error instanceof Error ? error.message : String(error);
-            log(`Error en API REST (restart): ${message}`, { resourceColor: chalk.red });
+            log(`Error in REST API (restart): ${message}`, { resourceColor: chalk.red });
             res.status(500).json({ error: message });
         }
     });
     
     app.listen(API_CONFIG.port, () => {
-        log(`🌐 API REST escuchando en puerto ${chalk.red(API_CONFIG.port)}`, { resourceColor: chalk.green, textColor: chalk.hex('#1abc9c') });
+        log(`🌐 REST API listening on port ${chalk.red(API_CONFIG.port)}`, { resourceColor: chalk.green, textColor: chalk.hex('#1abc9c') });
     });
     
     return app;

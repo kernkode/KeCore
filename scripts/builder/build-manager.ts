@@ -30,12 +30,12 @@ class BuildManager {
     private debounceTimer: NodeJS.Timeout | null = null;
     private isCompiling: boolean = false;
     
-    /** Realiza la compilación inicial de todos los recursos. */
+    /** Performs initial compilation of all resources. */
     async runInitialBuilds(): Promise<void> {
-        log("Buscando y compilando todos los recursos...", { textColor: chalk.hex('#db6934ff') });
+        log("Searching and compiling all resources...", { textColor: chalk.hex('#db6934ff') });
         const resourceDirs = await this.findResourceDirs(RESOURCES_PATH);
         const resourcePaths = resourceDirs.map(dir => path.relative(RESOURCES_PATH, dir));
-        log(`${resourcePaths.length} recursos encontrados.`, { textColor: chalk.hex('#db6934ff') });
+        log(`${resourcePaths.length} resources found.`, { textColor: chalk.hex('#db6934ff') });
 
         let hasErrors = false;
         for (let i = 0; i < resourcePaths.length; i += INITIAL_BUILD_CONCURRENCY) {
@@ -49,13 +49,13 @@ class BuildManager {
         }
 
         if (hasErrors) {
-            log("Errores en compilación inicial. Corrige y reinicia.", { textColor: chalk.red });
+            log("Errors in initial compilation. Fix and restart.", { textColor: chalk.red });
             process.exit(1);
         }
-        log("Compilación inicial completada.", { textColor: chalk.hex('#89F336') });
+        log("Initial compilation completed.", { textColor: chalk.hex('#89F336') });
     }
 
-    /** Busca recursivamente todos los directorios de recursos. */
+    /** Recursively searches for all resource directories. */
     async findResourceDirs(startPath: string): Promise<string[]> {
         const foundDirs: string[] = [];
         const search = async (currentPath: string): Promise<void> => {
@@ -71,7 +71,7 @@ class BuildManager {
         return foundDirs;
     }
 
-    /** Busca la raíz de un recurso (directorio con fxmanifest.lua) subiendo desde una ruta. */
+    /** Finds resource root (directory with fxmanifest.lua) by climbing up from a path. */
     async findResourceRoot(filePath: string): Promise<string | null> {
         if (resourceRootCache.has(filePath)) {
             return resourceRootCache.get(filePath) || null;
@@ -92,7 +92,7 @@ class BuildManager {
         return null;
     }
 
-    /** Maneja un cambio detectado en un archivo usando debouncing. */
+    /** Handles a detected file change using debouncing. */
     async handleFileChange(filePath: string): Promise<void> {
         if (this.debounceTimer) {
             clearTimeout(this.debounceTimer);
@@ -107,7 +107,7 @@ class BuildManager {
             const resourceName = path.basename(resourceRoot);
             const resourceRelativePath = path.relative(RESOURCES_PATH, resourceRoot);
             
-            log(`Cambio detectado en lote: ${path.basename(filePath)}`, { 
+            log(`Batch change detected: ${path.basename(filePath)}`, { 
                 resourceName: resourceName, 
                 textColor: chalk.cyan 
             });
@@ -120,7 +120,7 @@ class BuildManager {
                     const { success } = await this.compileResource(resourceRelativePath);
                     shouldRestart = success;
                 } else if (filePath.endsWith('fxmanifest.lua')) {
-                    log(`Cambio detectado en fxmanifest.lua - reiniciando recurso`, { 
+                    log(`Change detected in fxmanifest.lua - restarting resource`, { 
                         resourceName: resourceName, 
                         textColor: chalk.magenta 
                     });
@@ -135,7 +135,7 @@ class BuildManager {
                 }
             } catch (error) {
                 const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-                log(`Error procesando cambio: ${errorMessage}`, { 
+                log(`Error processing change: ${errorMessage}`, { 
                     resourceName: resourceName, 
                     textColor: chalk.red 
                 });
@@ -158,12 +158,12 @@ class BuildManager {
         } catch {
             return { 
                 success: true, 
-                message: "No es un recurso TypeScript." 
+                message: "Not a TypeScript resource." 
             };
         }
 
         try {
-            log("Compilando TypeScript...", { 
+            log("Compiling TypeScript...", { 
                 resourceName: resourceName, 
                 textColor: chalk.hex('#3498db') 
             });
@@ -186,7 +186,7 @@ class BuildManager {
 
             const result = await ctx.rebuild();
             if (result.errors.length > 0) {
-                log(`Errores de compilación:`, { 
+                log(`Compilation errors:`, { 
                     resourceName: resourceName, 
                     textColor: chalk.red 
                 });
@@ -194,7 +194,7 @@ class BuildManager {
                 return { success: false };
             }
 
-            log("Compilado exitosamente.", { 
+            log("Compiled successfully.", { 
                 resourceName: resourceName,
                 textColor: chalk.hex('#89F336')
             });
@@ -202,7 +202,7 @@ class BuildManager {
             return { success: true };
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-            log(`Error de compilación: ${errorMessage}`, { 
+            log(`Compilation error: ${errorMessage}`, { 
                 resourceName: resourceName, 
                 resourceColor: chalk.red 
             });
