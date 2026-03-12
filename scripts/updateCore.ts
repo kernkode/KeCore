@@ -10,9 +10,9 @@ import chalk from 'chalk';
 const pipelineAsync = promisify(pipeline);
 
 const GITHUB_USER = 'kernkode';
-const GITHUB_REPO = 'next.js'; // Cambia esto al repo real de tu framework si es necesario
+const GITHUB_REPO = 'KeCore'; // Cambia esto al repo real de tu framework si es necesario
 const FOLDER_PATH = 'resources/[framework]/kecore';
-const DEST_PATH = './kecore';
+const DEST_PATH = './resources/[framework]';
 
 const CACHE_DIR = './cache';
 const CACHE_FILE = path.join(CACHE_DIR, 'github_downloader_cache.json');
