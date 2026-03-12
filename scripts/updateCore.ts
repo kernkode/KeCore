@@ -239,15 +239,15 @@ async function main(): Promise<void> {
 
         // ③ Resumen global
         console.log(chalk.green.bold(`
-╔════════════════════════════════════════════════════╗
-║  🚀 ¡Sincronización completada!                     ║
-╠════════════════════════════════════════════════════╣
-║  📁 Carpetas:      ${String(SYNC_FOLDERS.length).padStart(4)}                           ║
-║  ✅ Intactos:      ${String(totalStats.intact).padStart(4)}                           ║
-║  🔄 Actualizados:  ${String(totalStats.updated).padStart(4)}                           ║
-║  📥 Nuevos:        ${String(totalStats.new).padStart(4)}                           ║
-║  📊 Total:         ${String(totalFiles).padStart(4)}                           ║
-╚════════════════════════════════════════════════════╝
+            ╔════════════════════════════════════════════════════╗
+            ║  🚀 ¡Sincronización completada!                    ║
+            ╠════════════════════════════════════════════════════╣
+            ║  📁 Carpetas:      ${String(SYNC_FOLDERS.length).padStart(4)}                            ║
+            ║  ✅ Intactos:      ${String(totalStats.intact).padStart(4)}                            ║
+            ║  🔄 Actualizados:  ${String(totalStats.updated).padStart(4)}                            ║
+            ║  📥 Nuevos:        ${String(totalStats.new).padStart(4)}                            ║
+            ║  📊 Total:         ${String(totalFiles).padStart(4)}                            ║
+            ╚════════════════════════════════════════════════════╝
         `));
 
     } catch (err: any) {
