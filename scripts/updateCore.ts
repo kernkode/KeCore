@@ -2,6 +2,7 @@ import axios, { AxiosInstance, AxiosResponse } from 'axios';
 import path from 'path';
 import fs from 'fs';
 import fsp from 'fs/promises';
+import crypto from 'crypto';
 import { promisify } from 'util';
 import { pipeline } from 'stream';
 import chalk from 'chalk';
@@ -10,9 +11,30 @@ const pipelineAsync = promisify(pipeline);
 
 const GITHUB_USER = 'kernkode';
 const GITHUB_REPO = 'KeCore';
-const FOLDER_PATH = 'resources/[framework]/kecore';
-const DEST_PATH = './resources/[framework]/kecore';
-const BRANCH = 'main'; // Cambia si usas otra rama
+const BRANCH = 'main';
+
+// ─── CONFIGURACIÓN DE DIRECTORIOS ───────────────────────
+// Agrega o quita carpetas aquí fácilmente
+interface SyncFolder {
+    remote: string;  // Path en el repo de GitHub
+    local: string;   // Path destino en disco
+}
+
+const SYNC_FOLDERS: SyncFolder[] = [
+    {
+        remote: 'resources/[framework]/kecore',
+        local: './resources/[framework]/kecore'
+    },
+    {
+        remote: 'scripts',
+        local: './scripts'
+    },
+    // Agrega más carpetas aquí:
+    // {
+    //     remote: 'resources/[standalone]/otro-recurso',
+    //     local: './resources/[standalone]/otro-recurso'
+    // },
+];
 
 // ─── Tipos ───────────────────────────────────────────────
 interface TreeItem {
@@ -31,11 +53,17 @@ interface TreeResponse {
 }
 
 interface FileInfo {
-    remotePath: string;   // path relativo dentro del repo
-    localPath: string;    // path en disco
+    remotePath: string;
+    localPath: string;
     sha: string;
     size: number;
     downloadUrl: string;
+}
+
+interface SyncStats {
+    intact: number;
+    updated: number;
+    new: number;
 }
 
 // ─── Cliente API ─────────────────────────────────────────
@@ -48,23 +76,21 @@ const apiClient: AxiosInstance = axios.create({
     timeout: 30000
 });
 
+// ─── SHA local (algoritmo de Git) ────────────────────────
 async function getLocalGitSha(filePath: string): Promise<string | null> {
     try {
         let content = await fsp.readFile(filePath);
-        
-        // NORMALIZACIÓN: Convertir saltos de línea de Windows (CRLF) a Unix (LF)
-        // Esto es necesario porque GitHub calcula el SHA usando LF.
+
+        // Normalizar CRLF → LF (GitHub usa LF)
         const contentStr = content.toString('utf8');
         const normalizedContentStr = contentStr.replace(/\r\n/g, '\n');
-        
-        // Volvemos a convertir a Buffer para calcular el hash correcto
         content = Buffer.from(normalizedContentStr, 'utf8');
 
         const header = `blob ${content.length}\0`;
         const store = Buffer.concat([Buffer.from(header), content]);
-        return require('crypto').createHash('sha1').update(store).digest('hex');
+        return crypto.createHash('sha1').update(store).digest('hex');
     } catch (error: any) {
-        if (error.code === 'ENOENT') return null; // No existe
+        if (error.code === 'ENOENT') return null;
         throw error;
     }
 }
@@ -78,25 +104,24 @@ async function getFullTree(): Promise<TreeItem[]> {
     );
 
     if (response.data.truncated) {
-        console.log(chalk.yellow('⚠️  El árbol está truncado (repo muy grande). Algunos archivos podrían faltar.'));
+        console.log(chalk.yellow('⚠️  Árbol truncado (repo muy grande). Algunos archivos podrían faltar.'));
     }
 
     return response.data.tree;
 }
 
-// ─── Filtrar solo los archivos de la carpeta objetivo ────
-function filterTreeToFolder(tree: TreeItem[], folderPath: string): FileInfo[] {
-    const prefix = folderPath.endsWith('/') ? folderPath : folderPath + '/';
+// ─── Filtrar archivos para UNA carpeta ───────────────────
+function filterTreeToFolder(tree: TreeItem[], folder: SyncFolder): FileInfo[] {
+    const prefix = folder.remote.endsWith('/') ? folder.remote : folder.remote + '/';
 
     return tree
         .filter(item => item.type === 'blob' && item.path.startsWith(prefix))
         .map(item => {
-            // Path relativo a la carpeta destino
             const relativePath = item.path.substring(prefix.length);
 
             return {
                 remotePath: item.path,
-                localPath: path.join(DEST_PATH, relativePath),
+                localPath: path.join(folder.local, relativePath),
                 sha: item.sha,
                 size: item.size || 0,
                 downloadUrl: `https://raw.githubusercontent.com/${GITHUB_USER}/${GITHUB_REPO}/${BRANCH}/${item.path}`
@@ -104,9 +129,8 @@ function filterTreeToFolder(tree: TreeItem[], folderPath: string): FileInfo[] {
         });
 }
 
-// ─── Descargar archivo con stream ────────────────────────
+// ─── Descargar archivo ───────────────────────────────────
 async function downloadFile(url: string, filePath: string): Promise<void> {
-    // Crear directorio padre si no existe
     await fsp.mkdir(path.dirname(filePath), { recursive: true });
 
     const response = await axios({
@@ -123,23 +147,53 @@ async function downloadFile(url: string, filePath: string): Promise<void> {
 async function processFile(file: FileInfo): Promise<'intact' | 'updated' | 'new'> {
     const localSha = await getLocalGitSha(file.localPath);
 
-    // Archivo no existe localmente
     if (localSha === null) {
-        console.log(chalk.magenta(`  📥 [NUEVO]         ${file.remotePath}`));
+        console.log(chalk.magenta(`    📥 [NUEVO]         ${file.remotePath}`));
         await downloadFile(file.downloadUrl, file.localPath);
         return 'new';
     }
 
-    // Comparar SHA (exactamente como lo hace Git)
     if (localSha === file.sha) {
-        console.log(chalk.gray(`  ✅ [INTACTO]       ${file.remotePath}`));
+        console.log(chalk.gray(`    ✅ [INTACTO]       ${file.remotePath}`));
         return 'intact';
     }
 
-    // SHA diferente → actualizar
-    console.log(chalk.yellow(`  🔄 [ACTUALIZANDO]  ${file.remotePath}`));
+    console.log(chalk.yellow(`    🔄 [ACTUALIZANDO]  ${file.remotePath}`));
     await downloadFile(file.downloadUrl, file.localPath);
     return 'updated';
+}
+
+// ─── Procesar UNA carpeta ────────────────────────────────
+async function syncFolder(
+    tree: TreeItem[],
+    folder: SyncFolder,
+    concurrency: number
+): Promise<SyncStats> {
+    const files = filterTreeToFolder(tree, folder);
+    const stats: SyncStats = { intact: 0, updated: 0, new: 0 };
+
+    if (files.length === 0) {
+        console.log(chalk.red(`  ❌ No se encontraron archivos en: ${folder.remote}\n`));
+        return stats;
+    }
+
+    console.log(chalk.cyan(`  📂 ${files.length} archivos encontrados\n`));
+
+    // Crear directorios necesarios
+    const dirs = new Set(files.map(f => path.dirname(f.localPath)));
+    await Promise.all([...dirs].map(dir => fsp.mkdir(dir, { recursive: true })));
+
+    // Procesar en batches
+    for (let i = 0; i < files.length; i += concurrency) {
+        const batch = files.slice(i, i + concurrency);
+        const results = await Promise.all(batch.map(file => processFile(file)));
+
+        for (const result of results) {
+            stats[result]++;
+        }
+    }
+
+    return stats;
 }
 
 // ─── Main ────────────────────────────────────────────────
@@ -147,53 +201,53 @@ async function main(): Promise<void> {
     console.time(chalk.yellow('⏱️  Tiempo total'));
 
     try {
+        const folderList = SYNC_FOLDERS.map(f => f.remote).join(', ');
+
         console.log(chalk.cyan.bold(`
-╔═══════════════════════════════════════════════╗
-║  📦 Sincronización Inteligente de KeCore       ║
-║  🔍 Comparando por SHA de Git (1 petición API) ║
-╚═══════════════════════════════════════════════╝
+╔════════════════════════════════════════════════════╗
+║  📦 Sincronización Inteligente de KeCore            ║
+║  🔍 Comparando por SHA de Git (1 petición API)      ║
+║  📁 Carpetas: ${folderList.padEnd(36)}║
+╚════════════════════════════════════════════════════╝
         `));
 
         // ① UNA sola petición para obtener todo el árbol
         const fullTree = await getFullTree();
 
-        // ② Filtrar solo los archivos de nuestra carpeta
-        const files = filterTreeToFolder(fullTree, FOLDER_PATH);
-
-        if (files.length === 0) {
-            console.log(chalk.red(`❌ No se encontraron archivos en: ${FOLDER_PATH}`));
-            return;
-        }
-
-        console.log(chalk.cyan(`📂 ${files.length} archivos encontrados en ${FOLDER_PATH}\n`));
-
-        // ③ Crear directorios necesarios
-        const dirs = new Set(files.map(f => path.dirname(f.localPath)));
-        await Promise.all([...dirs].map(dir => fsp.mkdir(dir, { recursive: true })));
-
-        // ④ Procesar todos los archivos en paralelo (con límite de concurrencia)
         const CONCURRENCY = 10;
-        const stats = { intact: 0, updated: 0, new: 0 };
+        const totalStats: SyncStats = { intact: 0, updated: 0, new: 0 };
+        let totalFiles = 0;
 
-        for (let i = 0; i < files.length; i += CONCURRENCY) {
-            const batch = files.slice(i, i + CONCURRENCY);
-            const results = await Promise.all(batch.map(file => processFile(file)));
+        // ② Iterar cada carpeta usando el MISMO árbol
+        for (const folder of SYNC_FOLDERS) {
+            console.log(chalk.blue.bold(`\n┌─ 📁 ${folder.remote}`));
+            console.log(chalk.blue(`│  → ${folder.local}`));
 
-            for (const result of results) {
-                stats[result]++;
-            }
+            const folderStats = await syncFolder(fullTree, folder, CONCURRENCY);
+
+            // Acumular stats globales
+            totalStats.intact += folderStats.intact;
+            totalStats.updated += folderStats.updated;
+            totalStats.new += folderStats.new;
+
+            const folderTotal = folderStats.intact + folderStats.updated + folderStats.new;
+            totalFiles += folderTotal;
+
+            console.log(chalk.blue(`│`));
+            console.log(chalk.blue(`└─ ✅ ${folderStats.intact} intactos | 🔄 ${folderStats.updated} actualizados | 📥 ${folderStats.new} nuevos`));
         }
 
-        // ⑤ Resumen
+        // ③ Resumen global
         console.log(chalk.green.bold(`
-╔═══════════════════════════════════════════════╗
-║  🚀 ¡Sincronización completada!                ║
-╠═══════════════════════════════════════════════╣
-║  ✅ Intactos:     ${String(stats.intact).padStart(4)}                        ║
-║  🔄 Actualizados: ${String(stats.updated).padStart(4)}                        ║
-║  📥 Nuevos:       ${String(stats.new).padStart(4)}                        ║
-║  📊 Total:        ${String(files.length).padStart(4)}                        ║
-╚═══════════════════════════════════════════════╝
+╔════════════════════════════════════════════════════╗
+║  🚀 ¡Sincronización completada!                     ║
+╠════════════════════════════════════════════════════╣
+║  📁 Carpetas:      ${String(SYNC_FOLDERS.length).padStart(4)}                           ║
+║  ✅ Intactos:      ${String(totalStats.intact).padStart(4)}                           ║
+║  🔄 Actualizados:  ${String(totalStats.updated).padStart(4)}                           ║
+║  📥 Nuevos:        ${String(totalStats.new).padStart(4)}                           ║
+║  📊 Total:         ${String(totalFiles).padStart(4)}                           ║
+╚════════════════════════════════════════════════════╝
         `));
 
     } catch (err: any) {
