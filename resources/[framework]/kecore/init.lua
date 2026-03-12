@@ -46,12 +46,12 @@ local function loadModule(name)
     local chunk = LoadResourceFile(name_resource, fileName)
 
     if not chunk then
-        return nil, "No se pudo leer el archivo"
+        return nil, "The file could not be read"
     end
 
     local compiled, err = load(chunk, fileName)
     if not compiled then
-        return nil, "Error de sintaxis: " .. err
+        return nil, "Syntax error: " .. err
     end
 
     return compiled(), nil
@@ -102,9 +102,9 @@ end
 
 -- Evaluación final: Un solo mensaje de éxito, o el reporte de errores
 if all_loaded then
-    print_debug("^2[kecore] %d módulos cargados correctamente en lado %s.^0", loaded_count, context)
+    print_debug("^2[kecore] %d modules loaded correctly on side %s.^0", loaded_count, context)
 else
-    print_debug("^1[kecore] ERROR CRÍTICO: Falló la carga de uno o más módulos:^0")
+    print_debug("^1[kecore] CRITICAL ERROR: One or more modules failed to load:^0")
     for _, errMsg in ipairs(errors) do
         print("^1  " .. errMsg .. "^0")
     end
