@@ -51,7 +51,7 @@ class ServerManager {
         return this.childProcess !== null && !this.childProcess.killed;
     }
 
-    isAutenticated(): boolean {
+    isAuthenticated(): boolean {
         return this.Authenticated;
     }
 

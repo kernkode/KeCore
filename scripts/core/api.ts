@@ -1,8 +1,6 @@
 import express, { Express, Request, Response, NextFunction } from 'express';
 import bodyParser from 'body-parser';
 import cors from 'cors';
-import chalk from 'chalk';
-
 import { serverManager } from './serverManager.ts';
 import { log } from './logger.ts';
 import { API_CONFIG } from './configs.ts';
@@ -118,7 +116,7 @@ export async function startRestAPI(): Promise<Express> {
     });
     
     app.post('/api/restart', authenticate, async (req: Request<{}, {}, RestartRequestBody>, res: Response) => {
-        if (!serverManager.isAutenticated()) {
+        if (!serverManager.isAuthenticated()) {
             return res.status(400).json({ error: 'The server has not fully started.' });
         }
         
@@ -128,7 +126,7 @@ export async function startRestAPI(): Promise<Express> {
             
             await serverManager.restart();
 
-            const isAuthenticated = await waitWithTimeout(() => serverManager.isAutenticated());
+            const isAuthenticated = await waitWithTimeout(() => serverManager.isAuthenticated());
 
             if (!isAuthenticated) {
                 log('Timeout: The server did not authenticate in 30 seconds', { resourceColor: chalk.red });
