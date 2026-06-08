@@ -1,6 +1,7 @@
 import express, { Express, Request, Response, NextFunction } from 'express';
 import bodyParser from 'body-parser';
 import cors from 'cors';
+import chalk from 'chalk';
 import { serverManager } from './serverManager.ts';
 import { log } from './logger.ts';
 import { API_CONFIG } from './configs.ts';
