@@ -14,11 +14,13 @@ local chunks = {
     { "performance/client/scaleform",   "scaleform",    "client" },
     --{ "performance/client/world",       "/",      "client" },
     { "performance/client/natives",     "natives",      "client" },
+    { "performance/client/vehicle",     "vehicle",      "client" },
     
     { "performance/server/os",          "os",           "server" },
     { "performance/server/axios",       "axios",        "server" },
     { "performance/server/http",        "http",         "server" },
     { "performance/server/discord",     "discord",      "server" },
+    { "performance/server/vehicle",     "vehicle",      "server" },
 }
 
 local context = IsDuplicityVersion() and "server" or "client"
