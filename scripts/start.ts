@@ -41,11 +41,21 @@ async function main(): Promise<void> {
     );
   
     try {
+        const requiredEnvVars = ['FXSERVER', 'ENDPOINT_TCP', 'ENDPOINT_UDP'] as const;
+
+        for (const varName of requiredEnvVars) {
+            if (!process.env[varName]) {
+                log(`❌ Missing required env var: ${varName}`, { resourceColor: chalk.red });
+                process.exit(1);
+            }
+        }
+
         if (environment.error) {
             log(`❌ Error loading .env: ${environment.error}`);
-        } else {
-            log('✅ .env loaded successfully');
+            process.exit(1);
         }
+
+        log('✅ .env loaded successfully');
 
         const updateInfo: UpdateInfo = await isAvailableUpdate(process.env.FXSERVER!);
         if (updateInfo.available) {

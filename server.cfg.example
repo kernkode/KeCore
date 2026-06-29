@@ -1,6 +1,7 @@
 # Copy this file to `server.cfg` and fill in your own values. `server.cfg` is gitignored.
 
 # Server Configuration
+# NOTE: endpoint_add_tcp/udp are auto-synced from .env (ENDPOINT_TCP/ENDPOINT_UDP) on startup — edit them there.
 endpoint_add_tcp "0.0.0.0:30120"
 endpoint_add_udp "0.0.0.0:30120"
 

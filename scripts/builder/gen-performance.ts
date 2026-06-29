@@ -11,6 +11,7 @@
  */
 import path from 'path';
 import fs from 'fs/promises';
+import crypto from 'crypto';
 import chalk from 'chalk';
 import { log } from '../core/logger.ts';
 import { RESOURCES_PATH } from '../core/configs.ts';
@@ -19,6 +20,7 @@ import { PERF_MODULES, type PerfModule } from './perf-modules.ts';
 const KECORE_PATH = path.join(RESOURCES_PATH, '[framework]', 'kecore');
 const INTERNAL_PATH = path.join(KECORE_PATH, 'internal');
 const PERFORMANCE_PATH = path.join(KECORE_PATH, 'performance');
+const HASH_FILE = path.join(PERFORMANCE_PATH, '.hash');
 
 /** Escapes a string for safe use inside a RegExp. */
 function escapeRegex(s: string): string {
@@ -90,8 +92,36 @@ function transform(mod: PerfModule, src: string): string {
     }
 }
 
+async function computeInternalHash(): Promise<string> {
+    const hashes = await Promise.all(
+        PERF_MODULES.map(async (mod) => {
+            const srcPath = path.join(INTERNAL_PATH, mod.src);
+            const content = await fs.readFile(srcPath, 'utf8').catch(() => '');
+            return crypto.createHash('sha256').update(content).digest('hex');
+        })
+    );
+    return crypto.createHash('sha256').update(hashes.join('')).digest('hex');
+}
+
+async function shouldRegenerate(): Promise<boolean> {
+    try {
+        const savedHash = await fs.readFile(HASH_FILE, 'utf8');
+        const currentHash = await computeInternalHash();
+        return savedHash.trim() !== currentHash;
+    } catch {
+        return true;
+    }
+}
+
 /** Generates every performance module. Returns the number of files written. */
 export async function generatePerformance(): Promise<number> {
+    if (!await shouldRegenerate()) {
+        log('performance/ is up-to-date (skipped)', {
+            resourceName: 'scripts:gen', textColor: chalk.hex('#89F336'),
+        });
+        return 0;
+    }
+
     let written = 0;
 
     await Promise.all(
@@ -115,6 +145,9 @@ export async function generatePerformance(): Promise<number> {
             written++;
         })
     );
+
+    const currentHash = await computeInternalHash();
+    await fs.writeFile(HASH_FILE, currentHash, 'utf8');
 
     log(`performance/ regenerated (${written} modules)`, {
         resourceName: 'scripts:gen', textColor: chalk.hex('#89F336'),

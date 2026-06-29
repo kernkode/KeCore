@@ -13,11 +13,16 @@ interface EsbuildContext {
     dispose(): Promise<void>;
 }
 
-export const esbuildContexts = new Map<string, EsbuildContext>(); // Caché para contextos de esbuild
-export const resourceRootCache = new LRUCache<string, any>({ max: 500 }); // Limitar a 500 entradas
+export const esbuildContexts = new Map<string, EsbuildContext>();
+export const resourceRootCache = new LRUCache<string, string>({
+    max: 100,
+    ttl: 1000 * 60 * 5  // 5 minutos
+});
 export const pendingRestarts = new Set<string>();
-// Cache para el archivo de configuración
-const configCache = new Map<string, string>();
+const configCache = new LRUCache<string, string>({
+    max: 10,
+    ttl: 1000 * 60 * 2  // 2 minutos
+});
 
 // Verifica si un puerto está en uso
 async function isPortInUse(port: string | number): Promise<boolean> {
@@ -38,13 +43,24 @@ class ServerManager {
     private Authenticated: boolean = false;
     private tcp_port: string;
     private udp_port: string;
+    private logBuffer: string[] = [];
+    private logFlushInterval: NodeJS.Timeout;
 
     constructor() {
         const tcpEndpoint = String(process.env.ENDPOINT_TCP || '');
         const udpEndpoint = String(process.env.ENDPOINT_UDP || '');
-        
+
         this.tcp_port = tcpEndpoint.split(':')[1] || '30120';
         this.udp_port = udpEndpoint.split(':')[1] || '30120';
+
+        this.logFlushInterval = setInterval(() => this.flushLogs(), 1000);
+    }
+
+    private flushLogs(): void {
+        if (this.logBuffer.length > 0) {
+            writeToLog(this.logBuffer.join(''));
+            this.logBuffer = [];
+        }
     }
 
     isRunning(): boolean {
@@ -65,19 +81,33 @@ class ServerManager {
         } catch (error: any) {
             log(`Error clearing log file: ${error.message}`, { resourceColor: chalk.red });
         }
-    
+
         if (this.childProcess) {
             log("Stopping previous server...");
             await fkill(this.childProcess.pid!, { force: true, silent: true }).catch(() => {});
         }
-    
+
+        const tcpInUse = await isPortInUse(this.tcp_port);
+        const udpInUse = await isPortInUse(this.udp_port);
+
+        if (tcpInUse || udpInUse) {
+            log(`Port conflict: TCP ${this.tcp_port} (${tcpInUse ? 'IN USE' : 'free'}), ` +
+                `UDP ${this.udp_port} (${udpInUse ? 'IN USE' : 'free'})`,
+                { resourceColor: chalk.red });
+            process.exit(1);
+        }
+
         log("Starting FXServer...", { textColor: chalk.hex('#1abc9c') });
     
         const SERVER_CFG_PATH = path.resolve('server.cfg');
         try {
             fs.accessSync(FXSERVER_EXECUTABLE);
             fs.accessSync(SERVER_CFG_PATH);
-            
+
+            // Sincroniza los endpoints del .env hacia server.cfg (fuente única: .env)
+            this.editConfig('endpoint_add_tcp', `"${process.env.ENDPOINT_TCP}"`);
+            this.editConfig('endpoint_add_udp', `"${process.env.ENDPOINT_UDP}"`);
+
             const useTxAdmin = this.isUsingTxAdmin()
             const commonArgs = ['+exec', 'server.cfg', '+set', 'onesync', 'on'];
 
@@ -92,27 +122,29 @@ class ServerManager {
     
             this.childProcess.stdout?.on('data', (data: Buffer) => {
                 process.stdout.write(data);
-                writeToLog(data.toString());
+                this.logBuffer.push(data.toString());
 
                 const text = "Authenticated with cfx.re Nucleus";
                 if(data.includes(text)){
                     this.Authenticated = true;
                 }
             });
-    
+
             this.childProcess.stderr?.on('data', (data: Buffer) => {
                 process.stderr.write(chalk.red(`[FXSERVER_ERROR] ${data}`));
-                writeToLog(data.toString());
+                this.logBuffer.push(data.toString());
             });
-    
+
             this.childProcess.on('close', (code: number | null) => {
                 log(`Server closed (code ${code})`, { resourceColor: chalk.red });
-                writeToLog(String(code));
+                this.logBuffer.push(String(code));
+                this.flushLogs();
             });
-    
+
             this.childProcess.on('error', (err: Error) => {
                 log(`Error starting the server: ${err.message}`, { resourceColor: chalk.red });
-                writeToLog(err.message);
+                this.logBuffer.push(err.message);
+                this.flushLogs();
                 process.exit(1);
             });
     
@@ -129,6 +161,8 @@ class ServerManager {
     async stop(): Promise<void> {
         if (this.childProcess && this.childProcess.pid) {
             log("Stopping server...", { resourceColor: chalk.hex('#1abc9c') });
+            this.flushLogs();
+            clearInterval(this.logFlushInterval);
             await fkill(this.childProcess.pid, { force: true, silent: true }).catch(() => {});
         }
     }

@@ -28,8 +28,10 @@ interface EsbuildContext {
 
 class BuildManager {
     private debounceTimer: NodeJS.Timeout | null = null;
-    private isCompiling: boolean = false;
-    
+    private compilationQueue = new Set<string>();
+    private isProcessingQueue = false;
+    private lastUsed = new Map<string, number>();
+
     /** Performs initial compilation of all resources. */
     async runInitialBuilds(): Promise<void> {
         log("Searching and compiling all resources...", { textColor: chalk.hex('#db6934ff') });
@@ -37,22 +39,18 @@ class BuildManager {
         const resourcePaths = resourceDirs.map(dir => path.relative(RESOURCES_PATH, dir));
         log(`${resourcePaths.length} resources found.`, { textColor: chalk.hex('#db6934ff') });
 
-        let hasErrors = false;
-        for (let i = 0; i < resourcePaths.length; i += INITIAL_BUILD_CONCURRENCY) {
-            const batch = resourcePaths.slice(i, i + INITIAL_BUILD_CONCURRENCY);
-            const results = await Promise.all(
-                batch.map(p => this.compileResource(p).catch(() => ({ success: false })))
-            );
-            if (results.some(r => !r.success)) {
-                hasErrors = true;
-            }
-        }
+        const results = await Promise.allSettled(
+            resourcePaths.map(p => this.compileResource(p))
+        );
 
-        if (hasErrors) {
-            log("Errors in initial compilation. Fix and restart.", { textColor: chalk.red });
-            process.exit(1);
+        const failed = results.filter(r => r.status === 'rejected' || (r.status === 'fulfilled' && !r.value.success));
+
+        if (failed.length > 0) {
+            log(`${failed.length}/${resourcePaths.length} resources failed. Review errors above.`,
+                { textColor: chalk.yellow });
+        } else {
+            log("All resources compiled successfully.", { textColor: chalk.hex('#89F336') });
         }
-        log("Initial compilation completed.", { textColor: chalk.hex('#89F336') });
     }
 
     /** Recursively searches for all resource directories. */
@@ -94,55 +92,67 @@ class BuildManager {
 
     /** Handles a detected file change using debouncing. */
     async handleFileChange(filePath: string): Promise<void> {
-        if (this.debounceTimer) {
-            clearTimeout(this.debounceTimer);
-        }
-    
-        this.debounceTimer = setTimeout(async () => {
-            if (this.isCompiling) return;
+        this.compilationQueue.add(filePath);
 
-            const resourceRoot = await this.findResourceRoot(filePath);
-            if (!resourceRoot) return;
-    
-            const resourceName = path.basename(resourceRoot);
-            const resourceRelativePath = path.relative(RESOURCES_PATH, resourceRoot);
-            
-            log(`Batch change detected: ${path.basename(filePath)}`, { 
-                resourceName: resourceName, 
-                textColor: chalk.cyan 
+        if (this.debounceTimer) clearTimeout(this.debounceTimer);
+        this.debounceTimer = setTimeout(() => this.processQueue(), 100);
+    }
+
+    private async processQueue(): Promise<void> {
+        if (this.isProcessingQueue || this.compilationQueue.size === 0) return;
+
+        this.isProcessingQueue = true;
+        const files = Array.from(this.compilationQueue);
+        this.compilationQueue.clear();
+
+        const resourceGroups = new Map<string, string[]>();
+        for (const file of files) {
+            const root = await this.findResourceRoot(file);
+            if (root) {
+                if (!resourceGroups.has(root)) resourceGroups.set(root, []);
+                resourceGroups.get(root)!.push(file);
+            }
+        }
+
+        for (const [root, changedFiles] of resourceGroups) {
+            const resourceName = path.basename(root);
+            const resourceRelativePath = path.relative(RESOURCES_PATH, root);
+
+            log(`Batch change detected: ${changedFiles.length} file(s)`, {
+                resourceName,
+                textColor: chalk.cyan
             });
-    
-            this.isCompiling = true;
+
             try {
                 let shouldRestart = false;
-                
-                if (filePath.endsWith('.ts')) {
+
+                if (changedFiles.some(f => f.endsWith('.ts'))) {
                     const { success } = await this.compileResource(resourceRelativePath);
                     shouldRestart = success;
-                } else if (filePath.endsWith('fxmanifest.lua')) {
-                    log(`Change detected in fxmanifest.lua - restarting resource`, { 
-                        resourceName: resourceName, 
-                        textColor: chalk.magenta 
+                } else if (changedFiles.some(f => f.endsWith('fxmanifest.lua'))) {
+                    log(`Change detected in fxmanifest.lua - restarting resource`, {
+                        resourceName,
+                        textColor: chalk.magenta
                     });
                     await serverManager.sendCommand(`refresh`);
                     shouldRestart = true;
                 } else {
                     shouldRestart = true;
                 }
-    
+
                 if (shouldRestart) {
                     await serverManager.restartResource(resourceName);
                 }
             } catch (error) {
                 const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-                log(`Error processing change: ${errorMessage}`, { 
-                    resourceName: resourceName, 
-                    textColor: chalk.red 
+                log(`Error processing change: ${errorMessage}`, {
+                    resourceName,
+                    textColor: chalk.red
                 });
-            } finally {
-                this.isCompiling = false;
             }
-        }, 100);
+        }
+
+        this.isProcessingQueue = false;
     }
 
     async compileResource(resourcePath: string): Promise<BuildResult> {
@@ -186,15 +196,18 @@ class BuildManager {
 
             const result = await ctx.rebuild();
             if (result.errors.length > 0) {
-                log(`Compilation errors:`, { 
-                    resourceName: resourceName, 
-                    textColor: chalk.red 
+                log(`Compilation errors:`, {
+                    resourceName: resourceName,
+                    textColor: chalk.red
                 });
                 result.errors.forEach(err => console.error(chalk.red(err.text)));
                 return { success: false };
             }
 
-            log("Compiled successfully.", { 
+            this.lastUsed.set(resourceName, Date.now());
+            this.cleanupOldContexts();
+
+            log("Compiled successfully.", {
                 resourceName: resourceName,
                 textColor: chalk.hex('#89F336')
             });
@@ -211,8 +224,25 @@ class BuildManager {
             if (ctx) {
                 await ctx.dispose();
                 esbuildContexts.delete(resourceName);
+                this.lastUsed.delete(resourceName);
             }
             return { success: false };
+        }
+    }
+
+    private cleanupOldContexts(): void {
+        const now = Date.now();
+        const threshold = 30 * 60 * 1000; // 30 minutos
+
+        for (const [name, lastUsed] of this.lastUsed) {
+            if (now - lastUsed > threshold) {
+                const ctx = esbuildContexts.get(name);
+                if (ctx) {
+                    ctx.dispose();
+                    esbuildContexts.delete(name);
+                    this.lastUsed.delete(name);
+                }
+            }
         }
     }
 }
