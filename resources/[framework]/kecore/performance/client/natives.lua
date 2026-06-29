@@ -1,4 +1,11 @@
+-- AUTO-GENERATED from internal/client/natives/impl.lua by scripts/builder/gen-performance.ts — DO NOT EDIT
+-- Edit the internal/ source and run `bun run gen:performance` to regenerate.
+
 local native = {}
+
+local function isWorldLoaded()
+    return exports.kecore:isWorldLoaded()
+end
 
 local isHealthRecharge = false
 local HealthRechargeMultiplier = 1.0
@@ -9,10 +16,6 @@ local FREEMODE_MODELS = {
     male = `mp_m_freemode_01`,
     female = `mp_f_freemode_01`
 }
-
-local function isWorldLoaded()
-    return exports.kecore:isWorldLoaded()
-end
 
 function native:spawn(coords, heading, modelHash)
     local oldPed = PlayerPedId()

@@ -1,4 +1,3 @@
-local handlers = {}
 local cache = {}
 
 ---Se Utiliza para escuchar un evento
@@ -29,36 +28,34 @@ end
 
 -- Función auxiliar para registrar un solo evento (para evitar duplicación de código)
 function kec:registerSingleEvent(name, callback)
-    if not handlers[name] then
-        handlers[name] = {}
-    end
-
     local success, err = pcall(function()
         local handler = RegisterNetEvent(name, function(...)
-            local numArgs = select('#', ...)
-
+            -- callFunc returns its own (ok, err); no shared upvalues so concurrent
+            -- invocations of this handler can't clobber each other's result.
             local function callFunc(fn, ...)
                 if kec:isServer() then
                     if source == '' then
-                        success, err = pcall(fn, ...)
+                        return pcall(fn, ...)
                     else
-                        success, err = pcall(fn, source, ...)
+                        return pcall(fn, source, ...)
                     end
                 else
-                    success, err = pcall(fn, ...)
+                    return pcall(fn, ...)
                 end
             end
 
-            callFunc(callback, ...)
+            local ok, cbErr = callFunc(callback, ...)
 
-            if not success and kec.debugEvents then
-                print(("^1[events] ERROR en el callback del evento '%s': %s^7"):format(name, err))
+            if not ok and kec.debugEvents then
+                print(("^1[events] ERROR en el callback del evento '%s': %s^7"):format(name, cbErr))
             end
         end)
 
-        cache[GetInvokingResource() or "this"] = handler
-        handlers[name] = handler
-        --print(("%s %s"):format(GetInvokingResource(), json.encode(handler)))
+        -- Track every handler per resource (array) so onResourceStop can remove
+        -- all of them, not just the last one registered.
+        local res = GetInvokingResource() or "this"
+        if not cache[res] then cache[res] = {} end
+        table.insert(cache[res], handler)
     end)
 
     if not success then
@@ -72,7 +69,7 @@ function kec:onLocal(name, callback)
         -- Use pcall to safely execute the provided callback, preventing resource crashes.
         local success, err = pcall(callback, ...)
         -- If an error occurred and debug mode is on, print the error to the console.
-        if not success and shared.debugMode then
+        if not success and kec.debugEvents then
             print(("^1[events] ERROR en el callback del evento local '%s': %s^7"):format(name, err))
         end
     end
@@ -121,8 +118,11 @@ function kec:emit(event, ...)
 end
 
 function kec:on_resource_start(handler)
+    -- Capture the caller BEFORE registering; GetInvokingResource() inside the
+    -- event callback returns the framework resource, not the original caller.
+    local invokingRes = GetInvokingResource()
     self:on("onResourceStart", function(resourceName)
-        if resourceName == GetInvokingResource() then
+        if resourceName == invokingRes then
             Wait(1000)
             handler()
         end
@@ -130,19 +130,17 @@ function kec:on_resource_start(handler)
 end
 
 function kec:on_resource_stop(handler)
+    local invokingRes = GetInvokingResource()
     self:on("onResourceStop", function(resourceName)
-        if resourceName == GetInvokingResource() then
+        if resourceName == invokingRes then
             handler()
         end
     end)
 end
 
 AddEventHandler("onResourceStop", function(resourceName)
-    print("Resource stopped: " .. resourceName)
-    for key, func in pairs(cache) do
-        if key == resourceName then
-            RemoveEventHandler(func)
-            print("Removed event handler for resource: " .. resourceName)
-        end
+    for _, func in ipairs(cache[resourceName] or {}) do
+        RemoveEventHandler(func)
     end
+    cache[resourceName] = nil
 end)

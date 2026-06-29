@@ -1,3 +1,6 @@
+-- AUTO-GENERATED from internal/client/keys.lua by scripts/builder/gen-performance.ts — DO NOT EDIT
+-- Edit the internal/ source and run `bun run gen:performance` to regenerate.
+
 local keys = {}
 
 function keys:bind(data)

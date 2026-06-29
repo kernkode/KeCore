@@ -1,3 +1,7 @@
+-- AUTO-GENERATED from internal/server/libs/os.lua by scripts/builder/gen-performance.ts — DO NOT EDIT
+-- Edit the internal/ source and run `bun run gen:performance` to regenerate.
+
+-- Only server-side
 
 ---@class os
 local os = {}

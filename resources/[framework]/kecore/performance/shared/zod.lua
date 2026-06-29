@@ -1,3 +1,6 @@
+-- AUTO-GENERATED from internal/shared/zod.lua by scripts/builder/gen-performance.ts — DO NOT EDIT
+-- Edit the internal/ source and run `bun run gen:performance` to regenerate.
+
 local zod = {}
 
 function zod:new(schema)
@@ -5,9 +8,9 @@ function zod:new(schema)
         schema = schema,
         errors = {}
     }
-    
+
     function validator:compile()
-        local schema = self.schema
+        local _schema = self.schema
         local function build_checker(node)
             local checks = {}
 
@@ -81,7 +84,7 @@ function zod:new(schema)
             end
         end
 
-        local root_checker = build_checker(schema)
+        local root_checker = build_checker(_schema)
         return {
             check = function(_, data)
                 return root_checker(data)

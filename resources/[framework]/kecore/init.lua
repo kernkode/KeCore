@@ -3,7 +3,7 @@ local chunks = {
     { "performance/shared/timers",      "/"},
     { "performance/shared/zod",         "zod" },
     { "performance/shared/lzwson",      "lzwson" },
-    { "performance/shared/base64",      "/" },
+    { "performance/shared/base64",      "base64" },
     { "performance/shared/lru_cache",   "lru_cache" },
     { "performance/shared/utils",       "utils" },
     { "performance/shared/enum",        "enum" },

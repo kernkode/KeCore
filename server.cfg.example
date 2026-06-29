@@ -1,14 +1,17 @@
+# Copy this file to `server.cfg` and fill in your own values. `server.cfg` is gitignored.
+
 # Server Configuration
 endpoint_add_tcp "0.0.0.0:30120"
 endpoint_add_udp "0.0.0.0:30120"
 
-# These resources will start by defaultexec config.cfg
+# These resources will start by default
+exec config.cfg
 exec scripts.cfg
 
 sv_scriptHookAllowed 0
 sets tags "default"
 
-sets locale "es-ES" 
+sets locale "es-ES"
 
 sv_enforceGameBuild 3717 #A Safehouse in the Hills
 sv_maxclients 48
@@ -24,7 +27,8 @@ setr sv_stateBagStrictMode false
 
 set steam_webApiKey ""
 
-sv_licenseKey "cfxk_key"
+# Get your key at https://keymaster.fivem.net — do NOT commit a real key
+sv_licenseKey "changeme"
 
 # Server tags
 sets sv_projectName "KeCore 2.0"

@@ -1,3 +1,6 @@
+-- AUTO-GENERATED from internal/server/libs/http.lua by scripts/builder/gen-performance.ts — DO NOT EDIT
+-- Edit the internal/ source and run `bun run gen:performance` to regenerate.
+
 local http = {}
 
 local routes = { GET = {}, POST = {}, PUT = {}, DELETE = {} }
@@ -150,11 +153,9 @@ function http:post(path, cb) addRoute('POST', path, cb) end
 function http:put(path, cb) addRoute('PUT', path, cb) end
 function http:delete(path, cb) addRoute('DELETE', path, cb) end
 
-return http
-
 -- Examples
 --[[
-kec.http:post('/api', function(req, res)
+http:post('/api', function(req, res)
     local data = req.body
     print('[DISCORD API] 📥 Petición recibida en /api: ' .. json.encode(data))
 
@@ -165,7 +166,7 @@ kec.http:post('/api', function(req, res)
     })
 end)
 
-kec.http:get('/jugador/:id', function(req, res)
+http:get('/jugador/:id', function(req, res)
     -- Si entras a /jugador/55, req.params.id será "55"
     local id = req.params.id
 
@@ -176,3 +177,5 @@ kec.http:get('/jugador/:id', function(req, res)
     end
 end)
 --]]
+
+return http

@@ -1,3 +1,6 @@
+-- AUTO-GENERATED from internal/server/libs/discord.lua by scripts/builder/gen-performance.ts — DO NOT EDIT
+-- Edit the internal/ source and run `bun run gen:performance` to regenerate.
+
 ---@class discord
 local discord = {
     -- Most commonly used permissions
@@ -65,7 +68,7 @@ function discord:getDiscordAvatar(discordId)
             }
         }
 
-        axios:get('https://discordapp.com/api/users/' .. discordId, config, function(err, response)
+        kec.axios:get('https://discordapp.com/api/users/' .. discordId, config, function(err, response)
             if not err and response and response.status == 200 and response.data then
                 local userData = response.data
                 if userData.avatar then
@@ -105,7 +108,7 @@ function discord:getDiscordUsername(discordId)
             }
         }
 
-        axios:get('https://discordapp.com/api/users/' .. discordId, config, function(err, response)
+        kec.axios:get('https://discordapp.com/api/users/' .. discordId, config, function(err, response)
             if not err and response and response.status == 200 and response.data then
                 local userData = response.data
                 if userData.username then
@@ -144,7 +147,7 @@ function discord:getDiscordDisplayName(discordId)
             }
         }
 
-        axios:get('https://discordapp.com/api/users/' .. discordId, config, function(err, response)
+        kec.axios:get('https://discordapp.com/api/users/' .. discordId, config, function(err, response)
             if not err and response and response.status == 200 and response.data then
                 local userData = response.data
 
@@ -181,7 +184,7 @@ function discord:getDiscordBanner(discordId)
             }
         }
 
-        axios:get('https://discordapp.com/api/users/' .. discordId, config, function(err, response)
+        kec.axios:get('https://discordapp.com/api/users/' .. discordId, config, function(err, response)
             if not err and response and response.status == 200 and response.data then
                 local userData = response.data
 
@@ -224,7 +227,7 @@ function discord:createRole(guildId, roleData, cb)
         }
     }
 
-    axios:post(
+    kec.axios:post(
         'https://discord.com/api/v10/guilds/' .. guildId .. '/roles',
         roleData,
         config,
@@ -285,7 +288,7 @@ function discord:deleteRole(guildId, roleId, cb)
         }
     }
 
-    axios:delete(
+    kec.axios:delete(
         'https://discord.com/api/v10/guilds/' .. guildId .. '/roles/' .. roleId,
         nil,
         config,
@@ -338,7 +341,7 @@ function discord:getRole(guildId, roleId, cb)
         }
     }
 
-    axios:get(
+    kec.axios:get(
         'https://discord.com/api/v10/guilds/' .. guildId .. '/roles/' .. roleId,
         config,
         function(err, response)
@@ -374,7 +377,7 @@ function discord:getAllRoles(guildId, cb)
         }
     }
 
-    axios:get(
+    kec.axios:get(
         'https://discord.com/api/v10/guilds/' .. guildId .. '/roles',
         config,
         function(err, response)
@@ -414,7 +417,7 @@ function discord:removeUserRole(guildId, targetDiscordId, roleId, cb)
         }
     }
 
-    axios:delete(
+    kec.axios:delete(
         'https://discord.com/api/v10/guilds/' .. guildId .. '/members/' .. targetDiscordId .. '/roles/' .. roleId,
         nil, 
         config,
@@ -474,7 +477,7 @@ function discord:modifyRole(guildId, roleId, roleData, cb)
         }
     }
 
-    axios:patch(
+    kec.axios:patch(
         'https://discord.com/api/v10/guilds/' .. guildId .. '/roles/' .. roleId,
         roleData,
         config,

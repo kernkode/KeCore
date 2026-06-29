@@ -1,0 +1,10 @@
+# Copy this file to `config.cfg` and fill in your own values. `config.cfg` is gitignored.
+
+# MongoDB — use your own connection string (do NOT commit real credentials)
+set mongodb_url "mongodb://user:password@localhost:27017"
+set mongodb_max_pool_size 10
+set mongodb_connect_timeout_ms 5000
+
+# Population
+set ENABLE_POPULATION true
+set ENTITY_CREATION true

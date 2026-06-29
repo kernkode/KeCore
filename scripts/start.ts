@@ -2,6 +2,7 @@ import chalk from 'chalk';
 import { log } from './core/logger.ts';
 import { startRestAPI } from './core/api.ts';
 import { buildManager } from './builder/build-manager.ts';
+import { generatePerformance } from './builder/gen-performance.ts';
 import { watcher } from './builder/watcher.ts';
 import { serverManager } from './core/serverManager.ts';
 import { isAvailableUpdate, downloadAndExtractFXServer } from './updater/utils.ts';
@@ -56,6 +57,7 @@ async function main(): Promise<void> {
                 .catch((err: Error) => console.error('Critical error:', err));
         }
 
+        await generatePerformance();
         await buildManager.runInitialBuilds();
         await serverManager.start();
         await startRestAPI();

@@ -1,7 +1,13 @@
+-- AUTO-GENERATED from internal/shared/timers.lua by scripts/builder/gen-performance.ts — DO NOT EDIT
+-- Edit the internal/ source and run `bun run gen:performance` to regenerate.
+
 local timers = {}
 
 ---Active timers
 local actives = {}
+
+---Timers cache
+local cache = {}
 
 ---Counter for unique IDs
 local nextId = 1
@@ -28,6 +34,7 @@ end
 function timers:clearTimer(id)
     if id and actives[id] ~= nil then
         actives[id] = nil
+        cache[id] = nil
         return true
     else
         warn("Warning: clearTimer called with invalid ID: " .. tostring(id))
@@ -44,6 +51,10 @@ function timers:everyTick(fn, time)
     actives[id] = true
 
     time = time or 0
+
+    cache[id] = {
+        callingResource = GetInvokingResource()
+    }
 
     Citizen.CreateThread(function()
         while actives[id] do
@@ -64,6 +75,7 @@ function timers:everyTick(fn, time)
             Wait(time)
         end
         actives[id] = nil
+        cache[id] = nil
     end)
     return handle_timer(id)
 end
@@ -83,6 +95,9 @@ function timers:setInterval(fn, time)
     local id = nextId
     nextId = nextId + 1
     actives[id] = true
+    cache[id] = {
+        callingResource = GetInvokingResource()
+    }
 
     Citizen.CreateThread(function()
         while actives[id] do
@@ -101,6 +116,7 @@ function timers:setInterval(fn, time)
             end
         end
         actives[id] = nil
+        cache[id] = nil
     end)
     return handle_timer(id)
 end
@@ -114,6 +130,10 @@ function timers:setTimeout(fn, timeout)
     nextId = nextId + 1
     actives[id] = true
 
+    cache[id] = {
+        callingResource = GetInvokingResource()
+    }
+
     CreateThread(function()
         Wait(timeout)
         if actives[id] then
@@ -123,6 +143,7 @@ function timers:setTimeout(fn, timeout)
             end
         end
         actives[id] = nil
+        cache[id] = nil
     end)
     return handle_timer(id)
 end
@@ -189,18 +210,26 @@ function timers:countDown(key, timeString)
         if currentSeconds <= 1 then
             timers:clearTimer(id)
             print("[Cooldown] ¡Tiempo terminado! ID: " .. key)
-            timers:emit("onCountdownFinish", key)
+            kec:emit("onCountdownFinish", key)
             return
         end
 
         currentSeconds = currentSeconds - 1
         local formattedTime = formatTime(currentSeconds)
         print("[Cooldown] Tiempo restante: " .. formattedTime)
-        TriggerEvent("onCountdownUpdate", key, formattedTime)
+        kec:emit("onCountdownUpdate", key, formattedTime)
     end, 1000)
 
     print("[Cooldown] Timer de cuenta regresiva iniciado. ID: " .. timerId)
     return timerId
 end
+
+AddEventHandler("onResourceStop", function(resourceName)
+    for id, data in pairs(cache) do
+        if data and data.callingResource == resourceName then
+            timers:clearTimer(id)
+        end
+    end
+end)
 
 return timers

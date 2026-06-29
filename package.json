@@ -8,6 +8,8 @@
   },
   "scripts": {
     "dev": "bun scripts/start.ts",
+    "gen:performance": "bun scripts/builder/gen-performance.ts",
+    "test": "bun scripts/test/run-lua-tests.ts",
     "update:latest": "bun scripts/update.ts latest",
     "update:recommended": "bun scripts/update.ts recommended",
     "update": "bun scripts/update.ts recommended",
@@ -49,6 +51,7 @@
     "@types/node": "^24.13.1",
     "bytenode": "^1.5.7",
     "chokidar": "^4.0.3",
-    "esbuild": "^0.25.12"
+    "esbuild": "^0.25.12",
+    "wasmoon": "^1.16.0"
   }
 }

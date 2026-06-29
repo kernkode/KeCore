@@ -1,16 +1,27 @@
-/artifacts
-/server-data/cache
+# Dependencies
 /node_modules
 package-lock.json
+
+# Build artifacts & cache
+/artifacts
+/cache
+resources/**/dist/
+
+# FXServer runtime data
+/txData
+/server-data/cache
 server-data/.replxx_history
 .replxx_history
-/cache
-/.vscode
-/resources/\[KeCore\]/ts-server/dist
-/resources/\[KeCore\]/ts-client/dist
-*.rar
-start_17000_dev_server.bat
-resources/\[TopLeague\]/tl_inventory/dist/main.js
-resources/\[KeCore\]/shared/dist/main.js
-/txData
 server.cfg.bkp
+
+# Editor / OS
+/.vscode
+
+# Archives
+*.rar
+
+# Secrets & machine-local config — copy the matching *.example file and fill it in.
+# These are intentionally untracked so real keys never reach the (public) repo.
+.env
+/config.cfg
+/server.cfg

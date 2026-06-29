@@ -1,3 +1,6 @@
+-- AUTO-GENERATED from internal/client/raycast.lua by scripts/builder/gen-performance.ts — DO NOT EDIT
+-- Edit the internal/ source and run `bun run gen:performance` to regenerate.
+
 ---@class raycast
 local raycast = {
     ---@class TraceFlags

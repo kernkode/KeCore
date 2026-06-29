@@ -1,3 +1,6 @@
+-- AUTO-GENERATED from internal/shared/lru_cache.lua by scripts/builder/gen-performance.ts — DO NOT EDIT
+-- Edit the internal/ source and run `bun run gen:performance` to regenerate.
+
 -- lru_cache.lua
 local lru_cache = {}
 

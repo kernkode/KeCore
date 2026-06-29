@@ -1,3 +1,6 @@
+-- AUTO-GENERATED from internal/shared/enum.lua by scripts/builder/gen-performance.ts — DO NOT EDIT
+-- Edit the internal/ source and run `bun run gen:performance` to regenerate.
+
 local enum = {
     entityType = {
         INVALID_ENTITY_ID = 0,

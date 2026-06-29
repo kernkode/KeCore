@@ -1,5 +1,8 @@
--- Aseguramos que la tabla base existe
+-- AUTO-GENERATED from internal/server/libs/axios.lua by scripts/builder/gen-performance.ts — DO NOT EDIT
+-- Edit the internal/ source and run `bun run gen:performance` to regenerate.
 
+-- Aseguramos que la tabla base existe
+kec = kec or {}
 local axios = {}
 
 -- Configuración por defecto

@@ -1,4 +1,7 @@
-lzwson = {}
+-- AUTO-GENERATED from internal/shared/lzwson.lua by scripts/builder/gen-performance.ts — DO NOT EDIT
+-- Edit the internal/ source and run `bun run gen:performance` to regenerate.
+
+local lzwson = {}
 
 -- Caracteres de escape para evitar problemas en el transporte de red de FiveM
 function lzwson:escape_str(s)

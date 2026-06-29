@@ -1,3 +1,6 @@
+-- AUTO-GENERATED from internal/client/label3d.lua by scripts/builder/gen-performance.ts — DO NOT EDIT
+-- Edit the internal/ source and run `bun run gen:performance` to regenerate.
+
 local label3d = {}
 
 local model_scale = kec.zod:new({
@@ -85,6 +88,7 @@ function label3d:new()
 
         if model_text:check(filter.text) then
             self.text = filter.text
+            print(#self.text)
         end
 
         return self
