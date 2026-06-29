@@ -83,7 +83,7 @@ end
 function kec.vehicle:get(entity)
     local instance = {
         entity = entity,
-        netId = NetworkGetNetworkIdFromEntity(entity),
+        netId = NetworkGetEntityIsNetworked(entity) and NetworkGetNetworkIdFromEntity(entity) or 0,
         model = GetEntityModel(entity)
     }
 
