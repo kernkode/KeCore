@@ -31,9 +31,20 @@ end
 function vehicle_methods:setExtra(extraId, disable)
     local extras = self:getInfo("extras") or {}
 
-    extras[extraId] = disable
+    extras[tostring(extraId)] = disable
     self:setInfo("extras", extras)
 
+    Entity(self.entity).state:set("extras", json.encode(extras), true)
+end
+
+function vehicle_methods:setExtras(extrasTable)
+    local extras = self:getInfo("extras") or {}
+
+    for extraId, disable in pairs(extrasTable) do
+        extras[tostring(extraId)] = disable
+    end
+    
+    self:setInfo("extras", extras)
     Entity(self.entity).state:set("extras", json.encode(extras), true)
 end
 
@@ -133,4 +144,40 @@ end
 
 function vehicle_methods:getInfo(key)
     return vehicle_info[tostring(self.id)] and vehicle_info[tostring(self.id)][key] or nil
+end
+
+-- ============================================================
+-- Siren Management
+-- ============================================================
+local vehicles_sirens_indexs = {
+    [GetHashKey("polbuffalo6")] = {1, 2, 3, 4}
+}
+
+function vehicle_methods:hasSiren()
+    local model = GetEntityModel(self.entity)
+    return vehicles_sirens_indexs[model] ~= nil
+end
+
+function vehicle_methods:isValidSirenIndex(index)
+    local model = GetEntityModel(self.entity)
+    local indexes = vehicles_sirens_indexs[model]
+    if not indexes then return false end
+
+    local targetIndex = tonumber(index)
+    for _, idx in ipairs(indexes) do
+        if idx == targetIndex then
+            return true
+        end
+    end
+
+    return false
+end
+
+function vehicle_methods:setSiren(index)
+    local model = GetEntityModel(self.entity)
+    local indexes = vehicles_sirens_indexs[model]
+    if not indexes then return end
+
+    local targetIndex = tonumber(index)
+    Entity(self.entity).state:set("siren", targetIndex, true)
 end

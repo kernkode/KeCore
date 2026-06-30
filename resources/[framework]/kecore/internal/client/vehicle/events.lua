@@ -20,15 +20,53 @@ AddStateBagChangeHandler("extras", nil, function(bagName, key, value, reserved, 
     local entity = GetEntityFromStateBagName(bagName)
     if not isValidVehicle(entity) then return end
 
-    SetVehicleAutoRepairDisabled(entity, true)
-
     if type(value) == "string" then
         value = json.decode(value)
     end
 
     for extraId, disable in pairs(value) do
-        SetVehicleExtra(entity, extraId, disable)
-        --print("extra " .. extraId .. " disabled: " .. tostring(disable))
+        local id = tonumber(extraId)
+        if id and DoesExtraExist(entity, id) then
+            local disableInt = 0
+            if type(disable) == "boolean" then
+                disableInt = disable and 1 or 0
+            elseif type(disable) == "number" then
+                disableInt = disable
+            end
+
+            SetVehicleExtra(entity, id, disableInt)
+        end
+    end
+end)
+
+-- ============================================================
+-- Siren StateBag (switch atomico sin parpadeo)
+-- ============================================================
+local vehicles_sirens_indexs = {
+    [GetHashKey("polbuffalo6")] = {1, 2, 3, 4}
+}
+
+AddStateBagChangeHandler("siren", nil, function(bagName, key, value, reserved, replicated)
+    local entity = GetEntityFromStateBagName(bagName)
+    if not isValidVehicle(entity) then return end
+
+    local targetIndex = tonumber(value)
+    if not targetIndex then return end
+
+    local model = GetEntityModel(entity)
+    local indexes = vehicles_sirens_indexs[model]
+    if not indexes then return end
+
+    -- Paso 1: Encender la seleccionada PRIMERO
+    if DoesExtraExist(entity, targetIndex) then
+        SetVehicleExtra(entity, targetIndex, 0)
+    end
+
+    -- Paso 2: Apagar todas las demas
+    for _, idx in ipairs(indexes) do
+        if idx ~= targetIndex and DoesExtraExist(entity, idx) then
+            SetVehicleExtra(entity, idx, 1)
+        end
     end
 end)
 
