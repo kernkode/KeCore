@@ -14,7 +14,6 @@ shared_scripts {
     'internal/shared/rpc/header.lua',
     'internal/shared/rpc/impl.lua',
     'internal/shared/rpc/events.lua',
-    --'internal/shared/rpc/test.lua',
 
     'internal/shared/math.lua',
     'internal/shared/utils.lua',
@@ -41,6 +40,7 @@ server_scripts {
     'internal/server/vehicle/header.lua',
     'internal/server/vehicle/methods.lua',
     'internal/server/vehicle/vehicle.lua',
+    'internal/server/vehicle/events.lua',
 
     'internal/server/libs/os.lua',
     'internal/server/libs/axios.lua',
@@ -61,6 +61,7 @@ client_scripts {
     'internal/client/cam.lua',
     'internal/client/keys.lua',
     'internal/client/label3d.lua',
+    'internal/client/label2d.lua',
 
     'internal/client/controls/header.lua',
     'internal/client/controls/impl.lua',

@@ -35,6 +35,10 @@ function header(srcRel: string): string {
     );
 }
 
+function sourceList(mod: PerfModule): string[] {
+    return Array.isArray(mod.src) ? mod.src : [mod.src];
+}
+
 /**
  * Namespaced module: `kec.<name>` (own table + own methods) becomes a `local <name>`
  * that is returned. Cross-module refs (`kec.axios`, `kec.zod`, ...) and core calls
@@ -47,6 +51,20 @@ function transformNamespaced(src: string, name: string): string {
     // Turn the first top-level declaration (`<name> = ...`) into a local.
     out = out.replace(new RegExp(`^${n}\\s*=`, 'm'), `local ${name} =`);
     return `${out.trimEnd()}\n\nreturn ${name}\n`;
+}
+
+/**
+ * Extension module: internal extends `kec.<name>` but may also read shared data
+ * from that same framework namespace. Only declarations and owned methods are
+ * moved to the returned local module.
+ */
+function transformExtension(src: string, name: string): string {
+    const n = escapeRegex(name);
+    let out = src.replace(new RegExp(`^kec\\.${n}\\s*=\\s*\\{\\}\\s*$`, 'm'), '');
+    out = out.replace(new RegExp(`function\\s+kec\\.${n}([:.])`, 'g'), `function ${name}$1`);
+    out = out.replace(/^vehicle_methods\s*=/m, 'local vehicle_methods =');
+    out = out.replace(/^vehicle_info\s*=/m, 'local vehicle_info =');
+    return `local ${name} = {}\n\n${out.trimEnd()}\n\nreturn ${name}\n`;
 }
 
 /**
@@ -69,7 +87,8 @@ function transformFlat(src: string, name: string): string {
 /**
  * Native module: internal relies on the globals `native` and `isWorldLoaded`
  * (from internal/client/header.lua + world.lua) which do not exist inside consumer
- * resources. Wrap `native` as a local and shim `isWorldLoaded` via the export.
+ * resources. Wrap `native` as a local and use the `metadata` reference captured
+ * once by @kecore/init.lua; no exports are used in hot paths.
  */
 function transformNative(src: string, name: string): string {
     // Boolean reads of the global `isWorldLoaded` -> call the shim function.
@@ -77,7 +96,7 @@ function transformNative(src: string, name: string): string {
     const preamble =
         `local ${name} = {}\n\n` +
         `local function isWorldLoaded()\n` +
-        `    return exports.kecore:isWorldLoaded()\n` +
+        `    return kec.isWorldLoaded == true\n` +
         `end\n\n`;
     return `${preamble}${out.trimEnd()}\n\nreturn ${name}\n`;
 }
@@ -89,16 +108,17 @@ function transform(mod: PerfModule, src: string): string {
         case 'namespaced': return transformNamespaced(normalized, mod.name);
         case 'flat':       return transformFlat(normalized, mod.name);
         case 'native':     return transformNative(normalized, mod.name);
+        case 'extension':  return transformExtension(normalized, mod.name);
     }
 }
 
 async function computeInternalHash(): Promise<string> {
     const hashes = await Promise.all(
-        PERF_MODULES.map(async (mod) => {
-            const srcPath = path.join(INTERNAL_PATH, mod.src);
+        PERF_MODULES.flatMap((mod) => sourceList(mod).map(async (src) => {
+            const srcPath = path.join(INTERNAL_PATH, src);
             const content = await fs.readFile(srcPath, 'utf8').catch(() => '');
             return crypto.createHash('sha256').update(content).digest('hex');
-        })
+        }))
     );
     return crypto.createHash('sha256').update(hashes.join('')).digest('hex');
 }
@@ -126,20 +146,22 @@ export async function generatePerformance(): Promise<number> {
 
     await Promise.all(
         PERF_MODULES.map(async (mod) => {
-            const srcPath = path.join(INTERNAL_PATH, mod.src);
             const outPath = path.join(PERFORMANCE_PATH, mod.out);
 
             let src: string;
             try {
-                src = await fs.readFile(srcPath, 'utf8');
+                const sources = await Promise.all(
+                    sourceList(mod).map((srcRel) => fs.readFile(path.join(INTERNAL_PATH, srcRel), 'utf8'))
+                );
+                src = sources.join('\n\n');
             } catch {
-                log(`Missing internal source: internal/${mod.src}`, {
+                log(`Missing internal source: internal/${sourceList(mod).join(', internal/')}`, {
                     resourceName: 'scripts:gen', resourceColor: chalk.red,
                 });
-                throw new Error(`gen-performance: cannot read ${srcPath}`);
+                throw new Error(`gen-performance: cannot read ${sourceList(mod).join(', ')}`);
             }
 
-            const content = header(mod.src) + transform(mod, src);
+            const content = header(sourceList(mod).join(' + ')) + transform(mod, src);
             await fs.mkdir(path.dirname(outPath), { recursive: true });
             await fs.writeFile(outPath, content, 'utf8');
             written++;

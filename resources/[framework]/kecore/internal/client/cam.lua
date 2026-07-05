@@ -22,7 +22,7 @@ function kec.cam:new()
     end
 
     function instance:destroy()
-        if self.filter.diplayRadar == false then
+        if self.filter.displayRadar == false then
             DisplayRadar(true)
         end
 
@@ -42,9 +42,9 @@ function kec.cam:new()
     end
 
     function instance:flags(filter)
-        if filter.diplayRadar ~= nil then
-            DisplayRadar(filter.diplayRadar)
-            self.filter.diplayRadar = filter.diplayRadar
+        if filter.displayRadar ~= nil then
+            DisplayRadar(filter.displayRadar)
+            self.filter.displayRadar = filter.displayRadar
         end
         return self
     end

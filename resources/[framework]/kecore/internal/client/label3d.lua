@@ -57,7 +57,7 @@ function kec.label3d:new()
 
         SetTextScale(self.scale.x, self.scale.y)
         SetTextFont(self.font)
-        SetTextProportional(1)
+        SetTextProportional(self.proportional)
         SetTextColour(self.colors.r, self.colors.g, self.colors.b, self.colors.a)
         SetTextEntry("STRING")
         SetTextCentre(self.center)
@@ -85,7 +85,6 @@ function kec.label3d:new()
 
         if model_text:check(filter.text) then
             self.text = filter.text
-            print(#self.text)
         end
 
         return self

@@ -3,11 +3,11 @@ local function instance_player(src)
         return nil
     end
 
-    if player_cache[tostring(src)] then
-        return player_cache[tostring(src)]
-    end
-
     local playerKey = tostring(src)
+
+    if player_cache[playerKey] then
+        return player_cache[playerKey]
+    end
 
     local instance = {
         id = src,
@@ -36,9 +36,7 @@ local function instance_player(src)
         instance[methodName] = methodFunction
     end
 
-    if not player_cache[playerKey] then
-        player_cache[playerKey] = instance
-    end
+    player_cache[playerKey] = instance
 
     return instance
 end

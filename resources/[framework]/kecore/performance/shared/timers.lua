@@ -101,8 +101,6 @@ function timers:setInterval(fn, time)
 
     Citizen.CreateThread(function()
         while actives[id] do
-            if not actives[id] then break end
-
             Wait(time)
 
             if actives[id] == nil then break end
@@ -193,7 +191,7 @@ end
 -- FUNCIÓN DE COOLDOWN PARA FIVEM (USANDO kec)
 -- Inicia una cuenta regresiva usando setInterval.
 -- @param timeString string Tiempo en formato como "10s", "1m:30s", "1h:30m:10s"
--- @return number|nil ID del timer, o nil si el tiempo es inválido
+-- @return table|nil Instancia del timer, o nil si el tiempo es inválido
 ---
 function timers:countDown(key, timeString)
     local totalSeconds = parseTime(timeString)
@@ -206,22 +204,18 @@ function timers:countDown(key, timeString)
     local currentSeconds = totalSeconds
 
     -- Iniciar el timer usando timers:setInterval
-    local timerId = timers:setInterval(function(id)
+    local timer = timers:setInterval(function(id)
         if currentSeconds <= 1 then
             timers:clearTimer(id)
-            print("[Cooldown] ¡Tiempo terminado! ID: " .. key)
             kec:emit("onCountdownFinish", key)
             return
         end
 
         currentSeconds = currentSeconds - 1
-        local formattedTime = formatTime(currentSeconds)
-        print("[Cooldown] Tiempo restante: " .. formattedTime)
-        kec:emit("onCountdownUpdate", key, formattedTime)
+        kec:emit("onCountdownUpdate", key, formatTime(currentSeconds))
     end, 1000)
 
-    print("[Cooldown] Timer de cuenta regresiva iniciado. ID: " .. timerId)
-    return timerId
+    return timer
 end
 
 AddEventHandler("onResourceStop", function(resourceName)

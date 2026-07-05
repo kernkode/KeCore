@@ -136,13 +136,6 @@ function kec.rpc:awaitLocal(name, timeout, ...)
         args.n = args.n - 1
     end
 
-    -- VALIDACIÓN INMEDIATA: Comprobamos si el handler está registrado
-    if not handler then
-        print(("^1[RPC ERROR] El RPC local '%s' no existe o no ha sido registrado. Ejecución abortada.^0"):format(name))
-        return nil
-    end
-
-    -- Si el evento sí existe, procedemos normalmente
     return handleAwait(name, timeout, function(gen_id)
         kec:emit(rpc_hash, gen_id, table.unpack(args, 1, args.n))
     end, callback)

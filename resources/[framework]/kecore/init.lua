@@ -11,10 +11,12 @@ local chunks = {
     { "performance/client/raycast",     "raycast",      "client" },
     { "performance/client/keys",        "keys",         "client" },
     { "performance/client/label3d",     "label3d",      "client" },
+    { "performance/client/label2d",     "label2d",      "client" },
     { "performance/client/scaleform",   "scaleform",    "client" },
     --{ "performance/client/world",       "/",      "client" },
     { "performance/client/natives",     "natives",      "client" },
     { "performance/client/vehicle",     "vehicle",      "client" },
+    { "performance/client/controls",    "controls",     "client" },
     
     { "performance/server/os",          "os",           "server" },
     { "performance/server/axios",       "axios",        "server" },
@@ -31,8 +33,19 @@ kec = setmetatable(exports[name_resource]:get() or {}, {
     __index = function() return {} end
 })
 
+metadata = kec.metadata or {
+    player = {},
+    vehicle = {},
+    object = {}
+}
+kec.metadata = metadata
+
 if context == "client" then
     native = exports[name_resource]:natives()
+
+    AddEventHandler("kec:onPlayerLoaded", function()
+        kec.isWorldLoaded = true
+    end)
 end
 
 local function print_debug(text, ...)

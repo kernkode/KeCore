@@ -9,6 +9,11 @@ function lzwson:escape_str(s)
     return string.gsub(s, ".", mapping)
 end
 
+-- Cada código se serializa en 2 bytes, así que el diccionario no puede pasar
+-- de 65536 entradas; compresor y descompresor deben aplicar el MISMO límite
+-- para mantenerse sincronizados.
+local MAX_DICT_SIZE = 65536
+
 -- Algoritmo LZW: Compresión
 local function lzw_compress(payload)
     local dict = {}
@@ -18,7 +23,6 @@ local function lzw_compress(payload)
     
     local current = ""
     local result = {}
-    local code = 256
     local dict_size = 256
     
     for i = 1, #payload do
@@ -29,8 +33,10 @@ local function lzw_compress(payload)
             current = next_str
         else
             table.insert(result, string.char(math.floor(dict[current] / 256)) .. string.char(dict[current] % 256))
-            dict[next_str] = dict_size
-            dict_size = dict_size + 1
+            if dict_size < MAX_DICT_SIZE then
+                dict[next_str] = dict_size
+                dict_size = dict_size + 1
+            end
             current = char
         end
     end
@@ -69,8 +75,10 @@ local function lzw_decompress(payload)
         end
         
         table.insert(result, entry)
-        dict[dict_size] = current .. string.sub(entry, 1, 1)
-        dict_size = dict_size + 1
+        if dict_size < MAX_DICT_SIZE then
+            dict[dict_size] = current .. string.sub(entry, 1, 1)
+            dict_size = dict_size + 1
+        end
         current = entry
     end
     
@@ -105,12 +113,6 @@ function lzwson:unpack(compressedString)
         -- Fallback por si acaso se envía texto plano sin prefijo
         return json.decode(compressedString)
     end
-end
-
-function lzwson:compare(originalSize, compressedData)
-    local newSize = #compressedData
-    print(string.format("^2Compresión: %d bytes -> %d bytes (Ahorro: %d%%)^7",
-        originalSize, newSize, math.floor((1 - (newSize/originalSize)) * 100)))
 end
 
 return lzwson

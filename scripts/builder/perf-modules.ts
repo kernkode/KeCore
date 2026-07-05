@@ -12,16 +12,19 @@
  *     calls like `kec:emit` untouched.
  *   - 'native': internal uses the globals `native` / `isWorldLoaded` / `metadata`
  *     (defined in `internal/client/header.lua`) which do not exist in consumer
- *     resources. Output wraps `native` as a local module and shims `isWorldLoaded`
- *     via the kecore export.
+ *     resources. Output wraps `native` as a local module and reads `isWorldLoaded`
+ *     from the already-captured `kec` table.
+ *   - 'extension': internal extends an existing namespace such as `kec.vehicle`
+ *     but must keep shared refs (`kec.vehicle.state`, etc.) pointing at the
+ *     already-captured framework table.
  */
-export type PerfMode = 'namespaced' | 'flat' | 'native';
+export type PerfMode = 'namespaced' | 'flat' | 'native' | 'extension';
 
 export interface PerfModule {
     /** Destination path relative to `resources/[framework]/kecore/performance/`. */
     out: string;
     /** Source path relative to `resources/[framework]/kecore/internal/`. */
-    src: string;
+    src: string | string[];
     /** Local module variable name in the generated file. */
     name: string;
     mode: PerfMode;
@@ -41,12 +44,32 @@ export const PERF_MODULES: PerfModule[] = [
     { out: 'client/raycast.lua',   src: 'client/raycast.lua',          name: 'raycast',   mode: 'namespaced' },
     { out: 'client/keys.lua',      src: 'client/keys.lua',             name: 'keys',      mode: 'namespaced' },
     { out: 'client/label3d.lua',   src: 'client/label3d.lua',          name: 'label3d',   mode: 'namespaced' },
+    { out: 'client/label2d.lua',   src: 'client/label2d.lua',          name: 'label2d',   mode: 'namespaced' },
     { out: 'client/scaleform.lua', src: 'client/natives/scaleform.lua', name: 'scaleform', mode: 'namespaced' },
     { out: 'client/natives.lua',   src: 'client/natives/impl.lua',     name: 'native',    mode: 'native'     },
+    {
+        out: 'client/vehicle.lua',
+        src: ['client/vehicle/header.lua', 'client/vehicle/impl.lua'],
+        name: 'vehicle',
+        mode: 'extension',
+    },
+    {
+        // header.lua seeds kec.controls (+ the input map), impl.lua adds the cursor methods.
+        out: 'client/controls.lua',
+        src: ['client/controls/header.lua', 'client/controls/impl.lua'],
+        name: 'controls',
+        mode: 'namespaced',
+    },
 
     // server
     { out: 'server/os.lua',        src: 'server/libs/os.lua',      name: 'os',      mode: 'namespaced' },
     { out: 'server/axios.lua',     src: 'server/libs/axios.lua',   name: 'axios',   mode: 'namespaced' },
     { out: 'server/http.lua',      src: 'server/libs/http.lua',    name: 'http',    mode: 'namespaced' },
     { out: 'server/discord.lua',   src: 'server/libs/discord.lua', name: 'discord', mode: 'namespaced' },
+    {
+        out: 'server/vehicle.lua',
+        src: ['server/vehicle/header.lua', 'server/vehicle/methods.lua', 'server/vehicle/vehicle.lua'],
+        name: 'vehicle',
+        mode: 'extension',
+    },
 ];

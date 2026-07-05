@@ -53,7 +53,10 @@ function axios:request(method, url, data, config, cb)
 
         -- Procesar la respuesta
         local responseData = nil
-        local success = (err == nil or err == 200)
+        -- `err` is the HTTP status code here; accept the whole 2xx range as success
+        -- (201/204/etc.), not only 200.
+        local status = tonumber(err)
+        local success = (err == nil or (status ~= nil and status >= 200 and status < 300))
 
         if success and responseText and responseText ~= '' then
             local successParse, parsed = pcall(json.decode, responseText)

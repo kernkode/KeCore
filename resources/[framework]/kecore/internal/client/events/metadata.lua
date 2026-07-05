@@ -3,7 +3,6 @@ kec:on("kec:clearMetadata", function(section, id)
 end)
 
 kec:on("kec:setSyncedMeta", function(section, source, key, value)
-    print("kec:setSyncedMeta", section, source, key, value)
     if source ~= nil and key ~= nil then
         local src = tostring(source)
         metadata[section][src] = metadata[section][src] or {}
@@ -12,5 +11,11 @@ kec:on("kec:setSyncedMeta", function(section, source, key, value)
 end)
 
 kec:on("kec:updateMetadata", function(newMetadata)
-    metadata = newMetadata
+    for section in pairs(metadata) do
+        metadata[section] = nil
+    end
+
+    for section, data in pairs(newMetadata or {}) do
+        metadata[section] = data
+    end
 end)

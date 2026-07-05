@@ -11,7 +11,7 @@ local function urlDecode(str)
 end
 
 -- Utilidad: Parsear Body
-local function parseBody(bodyString, contentType)
+local function parseBody(bodyString)
     if not bodyString or bodyString == '' then return {} end
 
     -- Intentar JSON primero si parece JSON o el header lo dice
@@ -49,7 +49,7 @@ local function matchRoute(method, requestPath)
                 local params = {}
                 local i = 1
                 for paramName in routePattern:gmatch(":([%w_]+)") do
-                    params[paramName] = matches[i] or nil
+                    params[paramName] = matches[i]
                     i = i + 1
                 end
                 return handler, params
@@ -131,8 +131,7 @@ end
 -- Función interna para registrar
 local function addRoute(method, path, handler)
     if path:sub(1,1) ~= '/' then path = '/' .. path end
-    
-    if not routes[method] then routes[method] = {} end
+
     routes[method][path] = handler
     
     print(string.format('[http] Ruta registrada [%s] %s', method, path))

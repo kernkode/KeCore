@@ -48,81 +48,73 @@ kec.discord = {
 }
 
 ---
+---Obtiene el objeto de usuario de Discord de forma síncrona vía la API del bot.
+---Centraliza la petición HTTP compartida por los getters de avatar/nombre/banner.
+---@param discordId (number) El ID de Discord del jugador.
+---@return table|nil Los datos crudos del usuario, o nil si falla.
+---
+local function fetchDiscordUser(discordId)
+    if not discordId then return nil end
+
+    local p = promise.new()
+    local config = {
+        headers = {
+            ['Authorization'] = 'Bot ' .. kec.os:getEnv('DISCORD_TOKEN')
+        }
+    }
+
+    kec.axios:get('https://discordapp.com/api/users/' .. discordId, config, function(err, response)
+        if not err and response and response.status == 200 and response.data then
+            p:resolve(response.data)
+        else
+            print(('Error al obtener datos de Discord para ID %s: %s'):format(discordId, err or 'respuesta_invalida'))
+            p:resolve(nil)
+        end
+    end)
+
+    return Citizen.Await(p)
+end
+
+---
 ---Obtiene la URL del avatar de Discord de un jugador de forma síncrona.
----Utiliza el wrapper de axios para realizar la petición a la API de Discord.
 ---@param discordId (number) El ID de Discord del jugador.
 ---@return string La URL del avatar del jugador o una imagen por defecto.
 ---
 function kec.discord:getDiscordAvatar(discordId)
     local avatarUrl = "https://archive.org/download/discordprofilepictures/discordyellow.png" -- URL por defecto si falla
 
-    if discordId then
-        local promise = promise.new()
-
-        local config = {
-            headers = {
-                ['Authorization'] = 'Bot ' .. kec.os:getEnv('DISCORD_TOKEN')
-            }
-        }
-
-        kec.axios:get('https://discordapp.com/api/users/' .. discordId, config, function(err, response)
-            if not err and response and response.status == 200 and response.data then
-                local userData = response.data
-                if userData.avatar then
-                    local isAnimated = string.sub(userData.avatar, 1, 2) == 'a_'
-                    avatarUrl = string.format(
-                        "https://cdn.discordapp.com/avatars/%s/%s%s",
-                        discordId,
-                        userData.avatar,
-                        isAnimated and ".gif" or ".png"
-                    )
-                end
-            else
-                print(('Error al obtener avatar de Discord para ID %s: %s'):format(discordId, err or 'respuesta_invalida'))
-            end
-            promise:resolve()
-        end)
-        Citizen.Await(promise)
+    local userData = fetchDiscordUser(discordId)
+    if userData and userData.avatar then
+        local isAnimated = string.sub(userData.avatar, 1, 2) == 'a_'
+        avatarUrl = string.format(
+            "https://cdn.discordapp.com/avatars/%s/%s%s",
+            discordId,
+            userData.avatar,
+            isAnimated and ".gif" or ".png"
+        )
     end
+
     return avatarUrl
 end
 
 ---
 ---Obtiene el nombre de usuario de Discord de un jugador de forma síncrona.
----Utiliza el wrapper de axios para realizar la petición a la API de Discord.
 ---@param discordId (number) El ID de Discord del jugador.
 ---@return string El nombre de usuario de Discord o "Usuario Desconocido" si falla.
 ---
 function kec.discord:getDiscordUsername(discordId)
     local discordName = "Usuario Desconocido" -- Nombre por defecto si falla
 
-    if discordId then
-        local promise = promise.new()
-
-        local config = {
-            headers = {
-                ['Authorization'] = 'Bot ' .. kec.os:getEnv('DISCORD_TOKEN')
-            }
-        }
-
-        kec.axios:get('https://discordapp.com/api/users/' .. discordId, config, function(err, response)
-            if not err and response and response.status == 200 and response.data then
-                local userData = response.data
-                if userData.username then
-                    -- Si tiene discriminator (ej: Usuario#1234)
-                    if userData.discriminator and userData.discriminator ~= "0" then
-                        discordName = userData.username .. "#" .. userData.discriminator
-                    else
-                        discordName = userData.username
-                    end
-                end
-            else
-                print(('Error al obtener nombre de Discord para ID %s: %s'):format(discordId, err or 'respuesta_invalida'))
-            end
-            promise:resolve()
-        end)
-        Citizen.Await(promise)
+    local userData = fetchDiscordUser(discordId)
+    if userData and userData.username then
+        -- Si tiene discriminator (ej: Usuario#1234)
+        if userData.discriminator and userData.discriminator ~= "0" then
+            discordName = userData.username .. "#" .. userData.discriminator
+        else
+            discordName = userData.username
+        end
     end
+
     return discordName
 end
 
@@ -135,73 +127,34 @@ end
 function kec.discord:getDiscordDisplayName(discordId)
     local displayName = "Usuario Desconocido" -- Nombre por defecto si falla
 
-    if discordId then
-        local promise = promise.new()
-
-        local config = {
-            headers = {
-                ['Authorization'] = 'Bot ' .. kec.os:getEnv('DISCORD_TOKEN')
-            }
-        }
-
-        kec.axios:get('https://discordapp.com/api/users/' .. discordId, config, function(err, response)
-            if not err and response and response.status == 200 and response.data then
-                local userData = response.data
-
-                -- Prioriza el 'global_name' (el nombre "normal" o de visualización).
-                -- Si este no está definido o es nulo, usa el 'username' como alternativa.
-                if userData.global_name or userData.username then
-                    displayName = userData.global_name or userData.username
-                end
-            else
-                print(('Error al obtener el nombre global de Discord para ID %s: %s'):format(discordId, err or 'respuesta_invalida'))
-            end
-            promise:resolve()
-        end)
-        Citizen.Await(promise)
+    local userData = fetchDiscordUser(discordId)
+    if userData then
+        -- Prioriza 'global_name'; si no está, usa 'username' como alternativa.
+        displayName = userData.global_name or userData.username or displayName
     end
+
     return displayName
 end
 
 ---
 ---Obtiene la URL del banner de perfil de Discord de un jugador de forma síncrona.
----Utiliza el wrapper de axios para realizar la petición a la API de Discord.
 ---@param discordId (number) El ID de Discord del jugador.
----@return string La URL del banner del jugador o nil si no tiene banner.
+---@return string La URL del banner del jugador o una imagen por defecto.
 ---
 function kec.discord:getDiscordBanner(discordId)
     local bannerUrl = "https://i.pinimg.com/originals/02/87/d3/0287d3ba8b3330fca99f69e2001d3168.gif"
 
-    if discordId then
-        local promise = promise.new()
-
-        local config = {
-            headers = {
-                ['Authorization'] = 'Bot ' .. kec.os:getEnv('DISCORD_TOKEN')
-            }
-        }
-
-        kec.axios:get('https://discordapp.com/api/users/' .. discordId, config, function(err, response)
-            if not err and response and response.status == 200 and response.data then
-                local userData = response.data
-
-                -- Verificar si el usuario tiene banner
-                if userData.banner then
-                    local isAnimated = string.sub(userData.banner, 1, 2) == 'a_'
-                    bannerUrl = string.format(
-                        "https://cdn.discordapp.com/banners/%s/%s.%s?size=512",
-                        discordId,
-                        userData.banner,
-                        isAnimated and "gif" or "png"
-                    )
-                end
-            else
-                print(('Error al obtener banner de Discord para ID %s: %s'):format(discordId, err or 'respuesta_invalida'))
-            end
-            promise:resolve()
-        end)
-        Citizen.Await(promise)
+    local userData = fetchDiscordUser(discordId)
+    if userData and userData.banner then
+        local isAnimated = string.sub(userData.banner, 1, 2) == 'a_'
+        bannerUrl = string.format(
+            "https://cdn.discordapp.com/banners/%s/%s.%s?size=512",
+            discordId,
+            userData.banner,
+            isAnimated and "gif" or "png"
+        )
     end
+
     return bannerUrl
 end
 
@@ -281,7 +234,7 @@ function kec.discord:deleteRole(guildId, roleId, cb)
 
     local config = {
         headers = {
-            ['Authorization'] = 'Bot ' .. kec.os:getEnv('DISCORD_TOKEN', DiscordBotToken)
+            ['Authorization'] = 'Bot ' .. kec.os:getEnv('DISCORD_TOKEN')
         }
     }
 

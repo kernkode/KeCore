@@ -65,21 +65,23 @@ function kec:on_player_connecting(handler)
     end)
 end
 
---- Se utiliza para emitir un evento a todos los clientes de un recurso especifico
+--- Ejecuta `handler(player)` para cada jugador conectado cuando el recurso invocador se reinicia.
 --- @param self any
 --- @param handler function
 function kec:on_player_restart(handler)
-    local players = GetPlayers()
     local invoking = GetInvokingResource()
 
     self:on("onResourceStart", function(resourceName)
         if resourceName == invoking then
             Wait(500)
-            for _, src in ipairs(players) do
+            -- Snapshot the CURRENTLY connected players (capturing at registration
+            -- time would freeze an empty list from script load).
+            for _, src in ipairs(GetPlayers()) do
                 local player = kec:player(src)
-                if player == nil then return end
-
-                handler(player)
+                -- Skip a player we can't resolve; don't abort the whole loop.
+                if player ~= nil then
+                    handler(player)
+                end
             end
         end
     end)

@@ -231,12 +231,78 @@ async function testPerformanceModules() {
     lua.global.close();
 }
 
+async function testVehicleInfoSurvivesModuleReload() {
+    console.log('\n\x1b[1m[7] Regression — server vehicle info survives consumer restart\x1b[0m');
+    const lua = await new LuaFactory().createEngine();
+    lua.global.set('print', () => {});
+    lua.global.set('DoesEntityExist', (entity: number) => entity === 101);
+    lua.global.set('GetEntityType', () => 2);
+    lua.global.set('NetworkGetNetworkIdFromEntity', (entity: number) => entity + 1000);
+    lua.global.set('GetEntityModel', () => 12345);
+    lua.global.set('DeleteEntity', () => {});
+
+    lua.global.set('__VEHICLE_SERVER', await read('performance/server/vehicle.lua'));
+    const result = await lua.doString(`
+        kec = {
+            enum = { entityType = { INVALID_ENTITY_ID = 0, ENTITY_TYPE_VEHICLE = 2 } },
+            vehicle = {
+                state = { INFO = "_kecVehicleInfo" },
+                isValidEntity = function(_, entity)
+                    return entity == 101
+                end,
+            },
+            base64 = {
+                encode = function(_, value) return value end,
+                decode = function(_, value) return value end,
+            },
+        }
+
+        entityStates = {}
+
+        function Entity(entity)
+            entityStates[entity] = entityStates[entity] or {}
+            local state = entityStates[entity]
+
+            function state:set(key, value, replicate)
+                self[key] = value
+                self.__lastReplicate = replicate
+            end
+
+            return { state = state }
+        end
+
+        local firstModule = load(__VEHICLE_SERVER)()
+        local firstVehicle = firstModule:get(101)
+        firstVehicle:setInfo("_id", "veh-db-id")
+
+        local bagInfo = entityStates[101][kec.vehicle.state.INFO]
+        local persistedId = bagInfo and bagInfo._id or "missing"
+        local replicated = tostring(entityStates[101].__lastReplicate)
+
+        local reloadedModule = load(__VEHICLE_SERVER)()
+        local reloadedVehicle = reloadedModule:get(101)
+        local recoveredId = reloadedVehicle:getInfo("_id") or "missing"
+
+        reloadedVehicle:destroy()
+        local cleared = tostring(entityStates[101][kec.vehicle.state.INFO] == nil)
+
+        return persistedId .. "/" .. replicated .. "/" .. recoveredId .. "/" .. cleared
+    `);
+
+    assert(
+        result === 'veh-db-id/false/veh-db-id/true',
+        `vehicle _id persists in server-only state bag across module reload (got "${result}")`
+    );
+
+    lua.global.close();
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
-// 7. Negative control — load the PRE-FIX manager.lua (git HEAD) and prove the
+// 8. Negative control — load the PRE-FIX manager.lua (git HEAD) and prove the
 //    same tests FAIL there. This confirms the tests above actually discriminate.
 // ─────────────────────────────────────────────────────────────────────────────
 async function testNegativeControl() {
-    console.log('\n\x1b[1m[7] Negative control — pre-fix manager.lua (git HEAD) must misbehave\x1b[0m');
+    console.log('\n\x1b[1m[8] Negative control — pre-fix manager.lua (git HEAD) must misbehave\x1b[0m');
     let oldSrc: string;
     try {
         const { execSync } = await import('child_process');
@@ -246,6 +312,11 @@ async function testNegativeControl() {
         );
     } catch {
         console.log('  \x1b[33m⚠ skipped (could not read HEAD version)\x1b[0m');
+        return;
+    }
+
+    if (oldSrc.includes('local cache = {}') && oldSrc.includes('table.insert(cache[res], handler)')) {
+        console.log('  \x1b[33m- skipped (git HEAD already contains the fixed manager.lua)\x1b[0m');
         return;
     }
 
@@ -280,6 +351,7 @@ async function main() {
     await testCallbackErrorIsolation();
     await testResourceStartContext();
     await testPerformanceModules();
+    await testVehicleInfoSurvivesModuleReload();
     await testNegativeControl();
 
     console.log(`\n\x1b[1mResult:\x1b[0m \x1b[32m${passed} passed\x1b[0m, ${failed ? `\x1b[31m${failed} failed\x1b[0m` : '0 failed'}`);

@@ -1,4 +1,4 @@
-config = {
+local config = {
     -- activar la poblacion
     enablePopulation = GetConvarBool("ENABLE_POPULATION", false),
 

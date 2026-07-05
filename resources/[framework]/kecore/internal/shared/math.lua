@@ -262,77 +262,77 @@ kec.math = {
     end,
 }
 
-function kec.math:vector3()
-    --- Crea un nuevo vector3
-    ---@param x number|nil Coordenada X (default: 0)
-    ---@param y number|nil Coordenada Y (default: 0)
-    ---@param z number|nil Coordenada Z (default: 0)
-    ---@return table Vector3 con métodos
-    function new(x, y, z)
-        local newVector = {
-            x = x or 0,
-            y = y or 0,
-            z = z or 0
-        }
+kec.math.vector3 = {}
 
-        --- Normaliza el vector (longitud = 1)
-        ---@return table Nuevo vector normalizado
-        function newVector:normalize()
-            local length = math.sqrt(self.x^2 + self.y^2 + self.z^2)
-            -- Evitar división por cero
-            if length > 0 then
-                return shared.math.vector3.new(
-                    self.x / length,
-                    self.y / length,
-                    self.z / length
-                )
-            end
-            return shared.math.vector3.new(0, 0, 0)
-        end
+--- Crea un nuevo vector3 con métodos encadenables.
+---@param x number|nil Coordenada X (default: 0)
+---@param y number|nil Coordenada Y (default: 0)
+---@param z number|nil Coordenada Z (default: 0)
+---@return table Vector3 con métodos
+function kec.math.vector3.new(x, y, z)
+    local newVector = {
+        x = x or 0,
+        y = y or 0,
+        z = z or 0
+    }
 
-        --- Calcula la longitud/magnitud del vector
-        ---@return number Longitud del vector
-        function newVector:length()
-            return math.sqrt(self.x^2 + self.y^2 + self.z^2)
-        end
-
-        --- Representación string del vector
-        ---@return string String formateado
-        function newVector:toString()
-            return string.format("Vector3(%.2f, %.2f, %.2f)", self.x, self.y, self.z)
-        end
-
-        --- Suma con otro vector
-        ---@param other table Otro vector3
-        ---@return table Nuevo vector resultante
-        function newVector:add(other)
-            return shared.math.vector3.new(
-                self.x + other.x,
-                self.y + other.y,
-                self.z + other.z
+    --- Normaliza el vector (longitud = 1)
+    ---@return table Nuevo vector normalizado
+    function newVector:normalize()
+        local length = math.sqrt(self.x^2 + self.y^2 + self.z^2)
+        -- Evitar división por cero
+        if length > 0 then
+            return kec.math.vector3.new(
+                self.x / length,
+                self.y / length,
+                self.z / length
             )
         end
-
-        --- Producto punto con otro vector
-        ---@param other table Otro vector3
-        ---@return number Valor del producto punto
-        function newVector:dot(other)
-            return self.x * other.x + self.y * other.y + self.z * other.z
-        end
-
-        --- Producto cruz con otro vector
-        ---@param other table Otro vector3
-        ---@return table Nuevo vector resultante
-        function newVector:cross(other)
-            return shared.math.vector3.new(
-                self.y * other.z - self.z * other.y,
-                self.z * other.x - self.x * other.z,
-                self.x * other.y - self.y * other.x
-            )
-        end
-
-        return newVector
+        return kec.math.vector3.new(0, 0, 0)
     end
+
+    --- Calcula la longitud/magnitud del vector
+    ---@return number Longitud del vector
+    function newVector:length()
+        return math.sqrt(self.x^2 + self.y^2 + self.z^2)
+    end
+
+    --- Representación string del vector
+    ---@return string String formateado
+    function newVector:toString()
+        return string.format("Vector3(%.2f, %.2f, %.2f)", self.x, self.y, self.z)
+    end
+
+    --- Suma con otro vector
+    ---@param other table Otro vector3
+    ---@return table Nuevo vector resultante
+    function newVector:add(other)
+        return kec.math.vector3.new(
+            self.x + other.x,
+            self.y + other.y,
+            self.z + other.z
+        )
+    end
+
+    --- Producto punto con otro vector
+    ---@param other table Otro vector3
+    ---@return number Valor del producto punto
+    function newVector:dot(other)
+        return self.x * other.x + self.y * other.y + self.z * other.z
+    end
+
+    --- Producto cruz con otro vector
+    ---@param other table Otro vector3
+    ---@return table Nuevo vector resultante
+    function newVector:cross(other)
+        return kec.math.vector3.new(
+            self.y * other.z - self.z * other.y,
+            self.z * other.x - self.x * other.z,
+            self.x * other.y - self.y * other.x
+        )
+    end
+
+    return newVector
 end
 
 function kec.math:bitsToFloat(intVal)

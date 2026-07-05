@@ -1,10 +1,12 @@
 -- Espera que el mundo se cargue.
 CreateThread(function()
-    local ped = PlayerPedId()
-
     while not NetworkIsPlayerActive(PlayerId()) do
         Citizen.Wait(100)
     end
+
+    -- Fetch the ped AFTER the player is network-active: the handle captured
+    -- before activation is typically stale by the time these checks run.
+    local ped = PlayerPedId()
 
     local timer = GetGameTimer()
     while (not HasCollisionLoadedAroundEntity(ped) and (GetGameTimer() - timer) < 5000) do
@@ -17,6 +19,7 @@ CreateThread(function()
     end
 
     isWorldLoaded = true
+    kec.isWorldLoaded = true
 
     Wait(500)
     kec:emitServer("kec:onPlayerLoaded")

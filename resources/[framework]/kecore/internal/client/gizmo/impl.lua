@@ -1,6 +1,6 @@
 kec.gizmo = {}
 
-scaleform = nil
+local scaleform = nil
 
 Buffer.__index = Buffer
 
@@ -132,11 +132,6 @@ local function CrossProduct(a, b)
 end
 
 local function DrawPlayerGizmo(entity)
-    local forward = normalizeVec(GetEntityForwardVector(entity))
-    local up = vector3(0.0, 0.0, 1.0)
-    local right = normalizeVec(CrossProduct(forward, up))
-    up = normalizeVec(CrossProduct(right, forward))
-
     local matrixBuffer = makeEntityMatrix(entity)
     if DrawGizmo(matrixBuffer:Buffer(), "Editor1") then
         applyEntityMatrix(entity, matrixBuffer)
@@ -176,9 +171,15 @@ function kec.gizmo:stop()
     if tick and tick:isRunning() then
         tick:cancel()
     end
+    -- Destroy the instructional-button scaleform regardless of whether the
+    -- entity still exists, otherwise it leaks when the entity was deleted first.
+    if scaleform then
+        scaleform:destroy()
+        scaleform = nil
+    end
+
     if entitySelected and DoesEntityExist(entitySelected) then
         FreezeEntityPosition(entitySelected, false)
-        scaleform:destroy()
 
         if GetEntityType(entitySelected) ~= 1 then
             SetEntityDrawOutline(entitySelected, false)
@@ -194,5 +195,8 @@ function kec.gizmo:isRunning()
 end
 
 AddEventHandler("onResourceStop", function(resourceName)
-    
+    if resourceName == GetCurrentResourceName() then
+        -- Clean up an in-progress gizmo (tick, scaleform, frozen entity).
+        kec.gizmo:stop()
+    end
 end)

@@ -1,12 +1,6 @@
+local state = kec.vehicle.state
 local function isValidVehicle(entity)
-    if entity == 0 or GetEntityType(entity) ~= 2 then return false end
-
-    while not HasCollisionLoadedAroundEntity(entity) do
-        if not DoesEntityExist(entity) then return false end
-        Wait(250)
-    end
-
-    return true
+    return kec.vehicle:isValidEntity(entity, true)
 end
 
 AddStateBagChangeHandler(nil, nil, function(bagName, key, value, reserved, replicated)
@@ -16,7 +10,7 @@ AddStateBagChangeHandler(nil, nil, function(bagName, key, value, reserved, repli
     SetVehicleInfluencesWantedLevel(entity, false)
 end)
 
-AddStateBagChangeHandler("extras", nil, function(bagName, key, value, reserved, replicated)
+AddStateBagChangeHandler(state.EXTRAS, nil, function(bagName, key, value, reserved, replicated)
     local entity = GetEntityFromStateBagName(bagName)
     if not isValidVehicle(entity) then return end
 
@@ -42,11 +36,8 @@ end)
 -- ============================================================
 -- Siren StateBag (switch atomico sin parpadeo)
 -- ============================================================
-local vehicles_sirens_indexs = {
-    [GetHashKey("polbuffalo6")] = {1, 2, 3, 4}
-}
 
-AddStateBagChangeHandler("siren", nil, function(bagName, key, value, reserved, replicated)
+AddStateBagChangeHandler(state.SIREN, nil, function(bagName, key, value, reserved, replicated)
     local entity = GetEntityFromStateBagName(bagName)
     if not isValidVehicle(entity) then return end
 
@@ -54,7 +45,7 @@ AddStateBagChangeHandler("siren", nil, function(bagName, key, value, reserved, r
     if not targetIndex then return end
 
     local model = GetEntityModel(entity)
-    local indexes = vehicles_sirens_indexs[model]
+    local indexes = kec.vehicle.sirenIndexes[model]
     if not indexes then return end
 
     -- Paso 1: Encender la seleccionada PRIMERO
@@ -70,7 +61,7 @@ AddStateBagChangeHandler("siren", nil, function(bagName, key, value, reserved, r
     end
 end)
 
-AddStateBagChangeHandler("mod", nil, function(bagName, key, value, reserved, replicated)
+AddStateBagChangeHandler(state.MOD, nil, function(bagName, key, value, reserved, replicated)
     local entity = GetEntityFromStateBagName(bagName)
     if not isValidVehicle(entity) then return end
 
@@ -86,7 +77,21 @@ AddStateBagChangeHandler("mod", nil, function(bagName, key, value, reserved, rep
     SetVehicleMod(entity, modType, modIndex, false)
 end)
 
-AddStateBagChangeHandler("wheels", nil, function(bagName, key, value, reserved, replicated)
+-- Set completo de mods/tuning: el servidor publica los mods guardados (carga) y aquí se
+-- aplican de una sola vez. isValidVehicle espera a que cargue la colisión, igual que el resto.
+AddStateBagChangeHandler(state.MODS, nil, function(bagName, key, value, reserved, replicated)
+    local entity = GetEntityFromStateBagName(bagName)
+    if not isValidVehicle(entity) then return end
+
+    if type(value) == "string" then
+        value = json.decode(value)
+    end
+    if type(value) ~= "table" then return end
+
+    kec.vehicle:get(entity):applyMods(value)
+end)
+
+AddStateBagChangeHandler(state.WHEELS, nil, function(bagName, key, value, reserved, replicated)
     local entity = GetEntityFromStateBagName(bagName)
     if not isValidVehicle(entity) then return end
 
@@ -101,7 +106,7 @@ AddStateBagChangeHandler("wheels", nil, function(bagName, key, value, reserved, 
     SetVehicleMod(entity, 23, wheel, false)
 end)
 
-AddStateBagChangeHandler("windowTint", nil, function(bagName, key, value, reserved, replicated)
+AddStateBagChangeHandler(state.WINDOW_TINT, nil, function(bagName, key, value, reserved, replicated)
     local entity = GetEntityFromStateBagName(bagName)
     if not isValidVehicle(entity) then return end
 
@@ -113,7 +118,7 @@ AddStateBagChangeHandler("windowTint", nil, function(bagName, key, value, reserv
     SetVehicleWindowTint(entity, tint)
 end)
 
-AddStateBagChangeHandler("wheelSmokeColor", nil, function(bagName, key, value, reserved, replicated)
+AddStateBagChangeHandler(state.WHEEL_SMOKE_COLOR, nil, function(bagName, key, value, reserved, replicated)
     local entity = GetEntityFromStateBagName(bagName)
     if not isValidVehicle(entity) then return end
 
@@ -128,14 +133,13 @@ AddStateBagChangeHandler("wheelSmokeColor", nil, function(bagName, key, value, r
 end)
 
 -- state bag handler to apply any deformation
-AddStateBagChangeHandler("deformation", nil, function(bagName, key, value, _unused, replicated)
+AddStateBagChangeHandler(state.DEFORMATION, nil, function(bagName, key, value, _unused, replicated)
 	if (bagName:find("entity") == nil) then return end
 
 	deformation:applyDeformation(GetEntityFromStateBagName(bagName), value)
 end)
 
-AddStateBagChangeHandler("repair", nil, function(bagName, key, value, _unused, replicated)
-    print("repair applied: " .. tostring(value))
+AddStateBagChangeHandler(state.REPAIR, nil, function(bagName, key, value, _unused, replicated)
     if (bagName:find("entity") == nil or value == false) then return end
 
     local entity = GetEntityFromStateBagName(bagName)
@@ -145,35 +149,59 @@ AddStateBagChangeHandler("repair", nil, function(bagName, key, value, _unused, r
     kec:emitServer("finishVehicleRepair", NetworkGetNetworkIdFromEntity(entity))
 end)
 
-AddStateBagChangeHandler("brokensDoords", nil, function(bagName, key, value, _unused, replicated)
+AddStateBagChangeHandler(state.BROKEN_DOORS, nil, function(bagName, key, value, _unused, replicated)
     if value == nil then return end
 
     local entity = GetEntityFromStateBagName(bagName)
     if not isValidVehicle(entity) then return end
 
     if type(value) == "string" then
+        if value == "" then value = "[]" end
         value = json.decode(value)
     end
 
+    if type(value) ~= "table" then return end
+
     for i, v in pairs(value) do
-        print(entity .. " " .. i .. " " .. tostring(v))
         SetVehicleDoorBroken(entity, tonumber(i), v)
     end
 end)
 
-AddStateBagChangeHandler("tyres", nil, function(bagName, key, value, _unused, replicated)
+AddStateBagChangeHandler(state.BROKEN_WINDOWS, nil, function(bagName, key, value, _unused, replicated)
     if value == nil then return end
 
     local entity = GetEntityFromStateBagName(bagName)
     if not isValidVehicle(entity) then return end
 
-    local vehicle = kec.vehicle:get(entity)
+    if type(value) == "string" then
+        if value == "" then value = "[]" end
+        value = json.decode(value)
+    end
 
-    --local tyres = vehicle:getIndexsTyres()
-    for i, isBurst in ipairs(value) do
-        local damage = isBurst and 1000 or 0
-        --vehicle:setTyreBurst(i, isBurst)
-        SetVehicleTyreBurst(entity, i, true, damage)
+    if type(value) ~= "table" then return end
+
+    for i, v in pairs(value) do
+        if v then
+            SmashVehicleWindow(entity, tonumber(i))
+        end
+    end
+end)
+
+AddStateBagChangeHandler(state.TYRES, nil, function(bagName, key, value, _unused, replicated)
+    if value == nil then return end
+
+    local entity = GetEntityFromStateBagName(bagName)
+    if not isValidVehicle(entity) then return end
+
+    -- The tyres payload is keyed by tyre index as a STRING (see getTyresBurst),
+    -- so iterate with pairs + tonumber; ipairs would find nothing and never apply.
+    for i, isBurst in pairs(value) do
+        local index = tonumber(i)
+        if isBurst then
+            SetVehicleTyreBurst(entity, index, true, 1000.0)
+        else
+            SetVehicleTyreFixed(entity, index)
+        end
     end
 end)
 
@@ -191,8 +219,11 @@ AddEventHandler("gameEventTriggered", function (name, args)
     local vehicle = kec.vehicle:get(entity)
 
     local doors = vehicle:getDoorsBroken()
-    Entity(entity).state:set("brokensDoords", doors, true)
+    Entity(entity).state:set(state.BROKEN_DOORS, doors, true)
 
     local tyres = vehicle:getTyresBurst()
-    vehicle:setStreamSyncedMeta("tyres", tyres, true)
+    vehicle:setStreamSyncedMeta(state.TYRES, tyres, true)
+
+    local windows = vehicle:getWindowsBroken()
+    Entity(entity).state:set(state.BROKEN_WINDOWS, windows, true)
 end)

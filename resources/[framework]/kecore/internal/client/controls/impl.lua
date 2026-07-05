@@ -1,4 +1,6 @@
-kec.controls = {}
+-- controls/header.lua (loaded first) seeds kec.controls with the input map;
+-- preserve it instead of clobbering with a fresh table.
+kec.controls = kec.controls or {}
 local isCursor = false
 
 function kec.controls:toggleCursor(toggle)

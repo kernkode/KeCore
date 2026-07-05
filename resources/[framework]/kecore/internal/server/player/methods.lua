@@ -1,9 +1,6 @@
 player_methods = {}
 
--- Establecer modelo del jugador
-function player_methods:setModel(modelHash)
-    kec:emitClient("setModel", self.id, modelHash)
-end
+
 
 -- Hacer spawn del jugador
 function player_methods:spawn(coords, heading, modelHash)
@@ -35,19 +32,22 @@ function player_methods:kick(reason)
 end
 
 function player_methods:setInfo(key, value)
-    player_info[tostring(self.id)] = player_info[tostring(self.id)] or {}
-    player_info[tostring(self.id)][key] = value
+    local id = tostring(self.id)
+    player_info[id] = player_info[id] or {}
+    player_info[id][key] = value
 end
 
 function player_methods:setInfoMultiple(infoTable)
-    player_info[tostring(self.id)] = player_info[tostring(self.id)] or {}
+    local id = tostring(self.id)
+    player_info[id] = player_info[id] or {}
     for key, value in pairs(infoTable) do
-        player_info[tostring(self.id)][key] = value
+        player_info[id][key] = value
     end
 end
 
 function player_methods:getInfo(key)
-    return player_info[tostring(self.id)] and player_info[tostring(self.id)][key] or nil
+    local info = player_info[tostring(self.id)]
+    return info and info[key] or nil
 end
 
 function player_methods:getCoords()

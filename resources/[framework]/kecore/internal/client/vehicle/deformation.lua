@@ -1,7 +1,7 @@
 deformation = {}
 
 -- set to true to see debug messages
-local DEBUG = true
+local DEBUG = false
 
 -- iterations for damage application
 local MAX_DEFORM_ITERATIONS <const> = 50
@@ -43,7 +43,7 @@ function IsVehicleBlacklisted(vehicle)
     return false
 end
 
-function deformation:applyDeformation(vehicle, deformation)
+function deformation:applyDeformation(vehicle, deformData)
 	if (not DoesEntityExist(vehicle)) then
 		local endTime = GetGameTimer() + 5000
 		while (not DoesEntityExist(vehicle) and GetGameTimer() < endTime) do
@@ -56,8 +56,8 @@ function deformation:applyDeformation(vehicle, deformation)
 	end
 	if (not IsEntityAVehicle(vehicle)) then return end
 
-	if (deformation and #deformation > 0) then
-		SetVehicleDeformation(vehicle, deformation)
+	if (deformData and #deformData > 0) then
+		SetVehicleDeformation(vehicle, deformData)
 	else
 		SetVehicleDeformationFixed(vehicle)
 	end
@@ -143,60 +143,6 @@ function SetVehicleDeformation(vehicle, deformationPoints, callback)
 	end)
 end
 
--- returns true if deformation is worse
--- TODO: BROKEN AS OF NOW
-function IsDeformationWorse(newDef, oldDef)
-	assert(newDef ~= nil and type(newDef) == "table", "Parameter \"newDeformation\" must be a table!")
-	assert(oldDef == nil or type(oldDef) == "table", "Parameter \"oldDeformation\" must be nil or a table!")
-
-	if (oldDef == nil or #newDef > #oldDef) then
-		return true
-	elseif (#newDef < #oldDef) then
-		return false
-	end
-
-	for i, new in ipairs(newDef) do
-		local found = false
-		for j, old in ipairs(oldDef) do
-			if (#new[1] == #old[1]) then
-				found = true
-
-				if (#new[2] > #old[2]) then
-					return true
-				end
-			end
-		end
-
-		if (not found) then
-			return true
-		end
-	end
-
-	return false
-end
-
--- returns true if deformation is equal
--- TODO: PROBABLY BROKEN AS WELL
-function IsDeformationEqual(newDef, oldDef)
-	assert(newDef == nil or type(newDef) == "table", "Parameter \"newDeformation\" must be nil or a table!")
-	assert(oldDef == nil or type(oldDef) == "table", "Parameter \"oldDeformation\" must be nil or a table!")
-
-	if (oldDef == nil and newDef == nil) then
-		return true
-	end
-	if (oldDef == nil or newDef == nil or #newDef ~= #oldDef) then
-		return false
-	end
-
-	for i, def in ipairs(newDef) do
-		if (#def[2] ~= #oldDef[i][2]) then
-			return false
-		end
-	end
-
-	return true
-end
-
 -- returns offsets for deformation check
 function GetVehicleOffsetsForDeformation(vehicle)
 	local model = GetEntityModel(vehicle)
@@ -267,14 +213,11 @@ function ClampVectorAlongAxis(v, axis)
 	return dot(v, axisNorm) * axisNorm
 end
 
--- rounds a float to the given number of decimals
-function Round(value, numDecimals)
-	return math.floor(value * 10^numDecimals) / 10^numDecimals
-end
-
 function LogDebug(text, ...)
 	if (DEBUG) then
-		print(("^0[DEBUG] %s^0"):format(text):format(...))
+		-- Concatenate the label, then format ONCE with the varargs. Formatting the
+		-- already-substituted string twice would break on any literal '%' in `text`.
+		print(("^0[DEBUG] " .. text .. "^0"):format(...))
 	end
 end
 
@@ -295,8 +238,8 @@ function deformation:handleDeformationUpdate(vehicle)
 
 	if (not DoesEntityExist(vehicle) or NetworkGetEntityOwner(vehicle) ~= PlayerId()) then return end
 
-	local deformation = GetVehicleDeformation(vehicle)
-	if (deformation and #deformation > 0) then
-		Entity(vehicle).state:set("deformation", deformation, true)
+	local deformData = GetVehicleDeformation(vehicle)
+	if (deformData and #deformData > 0) then
+		Entity(vehicle).state:set(kec.vehicle.state.DEFORMATION, deformData, true)
 	end
 end

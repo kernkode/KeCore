@@ -1,9 +1,5 @@
 ---@class natives
 native = {}
-metadata = {
-    player = {},
-    vehicle = {}
-}
 
 ---@type boolean
 isWorldLoaded = false

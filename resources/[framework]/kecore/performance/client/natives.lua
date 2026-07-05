@@ -4,7 +4,7 @@
 local native = {}
 
 local function isWorldLoaded()
-    return exports.kecore:isWorldLoaded()
+    return kec.isWorldLoaded == true
 end
 
 local isHealthRecharge = false
@@ -17,9 +17,23 @@ local FREEMODE_MODELS = {
     female = `mp_f_freemode_01`
 }
 
+function native:cacheCurrentClothes(ped)
+    if not ped_variations[ped] then ped_variations[ped] = {} end
+    for i = 0, 11 do
+        ped_variations[ped][i] = {
+            drawable = GetPedDrawableVariation(ped, i),
+            texture = GetPedTextureVariation(ped, i),
+            palette = GetPedPaletteVariation(ped, i)
+        }
+    end
+end
+
 function native:spawn(coords, heading, modelHash)
     local oldPed = PlayerPedId()
     local player = PlayerId()
+
+    -- Leer la ropa actual directo de GTA antes de que el motor la limpie al revivir
+    self:cacheCurrentClothes(oldPed)
 
     if modelHash then
         self:setModel(modelHash)
@@ -27,6 +41,8 @@ function native:spawn(coords, heading, modelHash)
 
     local newPed = PlayerPedId()
     if oldPed ~= newPed then
+        ped_variations[newPed] = ped_variations[oldPed]
+        ped_variations[oldPed] = nil
         DeleteEntity(oldPed)
     end
 
@@ -34,17 +50,15 @@ function native:spawn(coords, heading, modelHash)
         Wait(0)
     end
 
-    if isWorldLoaded() then
-        ShutdownLoadingScreen()
-    end
+    ShutdownLoadingScreen()
 
     if IsPlayerDead(player) then
         NetworkResurrectLocalPlayer(coords.x, coords.y, coords.z, heading, true, false)
     else
-        return self:setCoords(coords.x, coords.y, coords.z, heading)
+        self:setCoords(coords.x, coords.y, coords.z, heading)
     end
 
-    -- Limpieza de estado
+    -- Limpieza de estado (se ejecuta tanto para resurrección como para spawn vivo)
     ClearPedTasksImmediately(newPed)
     ClearPlayerWantedLevel(newPed)
 
@@ -60,9 +74,8 @@ function native:spawn(coords, heading, modelHash)
 
     kec:emitServer("player:spawned")
     kec:emit("player:spawned")
-    print("has sido spawneado")
 
-    -- Freeze the ped
+    -- Unfreeze the ped
     FreezeEntityPosition(newPed, false)
 end
 
@@ -102,6 +115,14 @@ function native:applyDefaultClothes()
             -- Si no tiene alguna ropa aplicada aplica la ropa por defecto
             if not native:hasComponentVariation(component[1]) then
                 native:setComponentVariation(component[1], component[2], component[3], component[4])
+            end
+        end
+
+        -- Restaurar todas las prendas guardadas (útil al revivir tras morir, ya que GTA limpia el ped)
+        local ped = PlayerPedId()
+        if ped_variations[ped] then
+            for compId, data in pairs(ped_variations[ped]) do
+                SetPedComponentVariation(ped, compId, data.drawable, data.texture, data.palette)
             end
         end
     end
@@ -150,10 +171,6 @@ function native:setModel(modelHash)
     end
 
     if native:isModelInCdimage(modelHash) and IsModelValid(modelHash) then
-        if currentModel == modelHash then
-            return false;
-        end
-
         native:requestModel(modelHash)
 
         while not native:hasModelLoaded(modelHash) do
