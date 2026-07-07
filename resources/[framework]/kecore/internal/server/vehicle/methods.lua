@@ -225,6 +225,14 @@ function vehicle_methods:getRot()
     return GetEntityRotation(self.entity).z
 end
 
+function vehicle_methods:getEngineHealth()
+    return GetVehicleEngineHealth(self.entity)
+end
+
+function vehicle_methods:getBodyHealth()
+    return GetVehicleBodyHealth(self.entity)
+end
+
 --- Establecer metadato sincronizados (stream)
 ---@param key any
 ---@param value any

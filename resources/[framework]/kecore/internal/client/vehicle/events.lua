@@ -10,6 +10,24 @@ AddStateBagChangeHandler(nil, nil, function(bagName, key, value, reserved, repli
     SetVehicleInfluencesWantedLevel(entity, false)
 end)
 
+AddStateBagChangeHandler("engineHealth", nil, function(bagName, key, value, reserved, replicated)
+    local entity = GetEntityFromStateBagName(bagName)
+    if not isValidVehicle(entity) then return end
+    
+    if type(value) == "number" then
+        SetVehicleEngineHealth(entity, value + 0.0)
+    end
+end)
+
+AddStateBagChangeHandler("bodyHealth", nil, function(bagName, key, value, reserved, replicated)
+    local entity = GetEntityFromStateBagName(bagName)
+    if not isValidVehicle(entity) then return end
+    
+    if type(value) == "number" then
+        SetVehicleBodyHealth(entity, value + 0.0)
+    end
+end)
+
 AddStateBagChangeHandler(state.EXTRAS, nil, function(bagName, key, value, reserved, replicated)
     local entity = GetEntityFromStateBagName(bagName)
     if not isValidVehicle(entity) then return end
