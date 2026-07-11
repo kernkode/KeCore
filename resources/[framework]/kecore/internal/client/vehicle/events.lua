@@ -223,6 +223,17 @@ AddStateBagChangeHandler(state.TYRES, nil, function(bagName, key, value, _unused
     end
 end)
 
+AddStateBagChangeHandler(state.DIRT, nil, function(bagName, key, value, _unused, replicated)
+    if value == nil then return end
+
+    local entity = GetEntityFromStateBagName(bagName)
+    if not isValidVehicle(entity) then return end
+
+    if type(value) == "number" then
+        SetVehicleDirtLevel(entity, value + 0.0)
+    end
+end)
+
 -- update state bag on taking damage
 AddEventHandler("gameEventTriggered", function (name, args)
 	if (name ~= "CEventNetworkEntityDamage") then return end

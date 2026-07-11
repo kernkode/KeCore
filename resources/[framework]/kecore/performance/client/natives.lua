@@ -72,11 +72,15 @@ function native:spawn(coords, heading, modelHash)
 
     self:applyDefaultClothes()
 
+    -- Pre-solicitar colision en la zona de spawn (Cayo Perico tarda en streamear)
+    RequestCollisionAtCoord(coords.x, coords.y, coords.z)
+
+    -- Congelar inmediatamente para que la gravedad no tire el ped antes de
+    -- que el handler on_player_spawn termine de configurar el polling.
+    FreezeEntityPosition(newPed, true)
+
     kec:emitServer("player:spawned")
     kec:emit("player:spawned")
-
-    -- Unfreeze the ped
-    FreezeEntityPosition(newPed, false)
 end
 
 -- Función para establecer posición

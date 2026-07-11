@@ -275,6 +275,9 @@
         concat(list) {
           return Buffer.concat(list);
         },
+        copy(source, target, targetStart, sourceStart, sourceEnd) {
+          return nodeJsByteUtils.toLocalBufferType(source).copy(target, targetStart ?? 0, sourceStart ?? 0, sourceEnd ?? source.length);
+        },
         equals(a6, b6) {
           return nodeJsByteUtils.toLocalBufferType(a6).equals(b6);
         },
@@ -412,6 +415,27 @@
             offset += uint8Array.length;
           }
           return result;
+        },
+        copy(source, target, targetStart, sourceStart, sourceEnd) {
+          if (sourceEnd !== void 0 && sourceEnd < 0) {
+            throw new RangeError(`The value of "sourceEnd" is out of range. It must be >= 0. Received ${sourceEnd}`);
+          }
+          sourceEnd = sourceEnd ?? source.length;
+          if (sourceStart !== void 0 && (sourceStart < 0 || sourceStart > sourceEnd)) {
+            throw new RangeError(`The value of "sourceStart" is out of range. It must be >= 0 and <= ${sourceEnd}. Received ${sourceStart}`);
+          }
+          sourceStart = sourceStart ?? 0;
+          if (targetStart !== void 0 && targetStart < 0) {
+            throw new RangeError(`The value of "targetStart" is out of range. It must be >= 0. Received ${targetStart}`);
+          }
+          targetStart = targetStart ?? 0;
+          const srcSlice = source.subarray(sourceStart, sourceEnd);
+          const maxLen = Math.min(srcSlice.length, target.length - targetStart);
+          if (maxLen <= 0) {
+            return 0;
+          }
+          target.set(srcSlice.subarray(0, maxLen), targetStart);
+          return maxLen;
         },
         equals(uint8Array, otherUint8Array) {
           if (uint8Array.byteLength !== otherUint8Array.byteLength) {
@@ -629,7 +653,7 @@
           if (!(buffer2 == null) && typeof buffer2 === "string" && !ArrayBuffer.isView(buffer2) && !isAnyArrayBuffer(buffer2) && !Array.isArray(buffer2)) {
             throw new BSONError("Binary can only be constructed from Uint8Array or number[]");
           }
-          this.sub_type = subType ?? _Binary.BSON_BINARY_SUBTYPE_DEFAULT;
+          this.sub_type = (subType ?? _Binary.BSON_BINARY_SUBTYPE_DEFAULT) & 255;
           if (buffer2 == null) {
             this.buffer = ByteUtils.allocate(_Binary.BUFFER_SIZE);
             this.position = 0;
@@ -727,7 +751,7 @@
           if (this.sub_type === _Binary.SUBTYPE_UUID) {
             return new UUID(this.buffer.subarray(0, this.position));
           }
-          throw new BSONError(`Binary sub_type "${this.sub_type}" is not supported for converting to UUID. Only "${_Binary.SUBTYPE_UUID}" is currently supported.`);
+          throw new BSONError(`Binary sub_type "${this.sub_type}" (${typeof this.sub_type}) is not supported for converting to UUID. Only 0x${_Binary.SUBTYPE_UUID.toString(16).padStart(2, "0")} is currently supported.`);
         }
         static createFromHexString(hex, subType) {
           return new _Binary(ByteUtils.fromHex(hex), subType);
@@ -2493,7 +2517,6 @@
           return "new MinKey()";
         }
       };
-      var PROCESS_UNIQUE = null;
       var __idCache = /* @__PURE__ */ new WeakMap();
       var _ObjectId = class _ObjectId extends BSONValue {
         constructor(inputId) {
@@ -2566,7 +2589,7 @@
           return hexString;
         }
         static getInc() {
-          return _ObjectId.index = (_ObjectId.index + 1) % 16777215;
+          return _ObjectId.index = (_ObjectId.index + 1) % 16777216;
         }
         static generate(time2) {
           if ("number" !== typeof time2) {
@@ -2575,9 +2598,7 @@
           const inc = _ObjectId.getInc();
           const buffer2 = ByteUtils.allocateUnsafe(12);
           NumberUtils.setInt32BE(buffer2, 0, time2);
-          if (PROCESS_UNIQUE === null) {
-            PROCESS_UNIQUE = ByteUtils.randomBytes(5);
-          }
+          const PROCESS_UNIQUE = this.PROCESS_UNIQUE;
           buffer2[4] = PROCESS_UNIQUE[0];
           buffer2[5] = PROCESS_UNIQUE[1];
           buffer2[6] = PROCESS_UNIQUE[2];
@@ -2689,26 +2710,48 @@
           return `new ObjectId(${inspect(this.toHexString(), options)})`;
         }
       };
-      __publicField(_ObjectId, "index", Math.floor(Math.random() * 16777215));
+      __publicField(_ObjectId, "index", 0);
+      __publicField(_ObjectId, "PROCESS_UNIQUE", null);
+      __publicField(_ObjectId, "resetState", () => {
+        _ObjectId.index = Math.floor(Math.random() * 16777216);
+        _ObjectId.PROCESS_UNIQUE = ByteUtils.randomBytes(5);
+      });
+      (() => {
+        _ObjectId.resetState();
+        const { startupSnapshot } = globalThis?.process?.getBuiltinModule?.("v8") ?? {};
+        if (startupSnapshot?.isBuildingSnapshot?.()) {
+          startupSnapshot?.addDeserializeCallback?.(_ObjectId.resetState);
+        }
+      })();
       __publicField(_ObjectId, "cacheHexString");
       var ObjectId2 = _ObjectId;
       function internalCalculateObjectSize(object, serializeFunctions, ignoreUndefined) {
-        let totalLength = 4 + 1;
-        if (Array.isArray(object)) {
-          for (let i6 = 0; i6 < object.length; i6++) {
-            totalLength += calculateElement(i6.toString(), object[i6], serializeFunctions, true, ignoreUndefined);
+        const objectStack = [
+          { obj: object, ignoreUndefined: ignoreUndefined ?? false }
+        ];
+        let total = 0;
+        while (objectStack.length > 0) {
+          const { obj, ignoreUndefined: frameIgnoreUndefined } = objectStack.pop();
+          total += 5;
+          const isObjArray = Array.isArray(obj);
+          let target = obj;
+          if (!isObjArray && typeof obj?.toBSON === "function") {
+            target = obj.toBSON();
           }
-        } else {
-          if (typeof object?.toBSON === "function") {
-            object = object.toBSON();
-          }
-          for (const key of Object.keys(object)) {
-            totalLength += calculateElement(key, object[key], serializeFunctions, false, ignoreUndefined);
+          if (isObjArray) {
+            const array = target;
+            for (let i6 = 0; i6 < array.length; i6++) {
+              total += calculateElementSize(i6.toString(), array[i6], serializeFunctions, true, frameIgnoreUndefined, objectStack);
+            }
+          } else {
+            for (const key of Object.keys(target)) {
+              total += calculateElementSize(key, target[key], serializeFunctions, false, frameIgnoreUndefined, objectStack);
+            }
           }
         }
-        return totalLength;
+        return total;
       }
-      function calculateElement(name, value, serializeFunctions = false, isArray = false, ignoreUndefined = false) {
+      function calculateElementSize(name, value, serializeFunctions = false, isArray = false, ignoreUndefined = false, objectStack) {
         if (typeof value?.toBSON === "function") {
           value = value.toBSON();
         }
@@ -2718,49 +2761,50 @@
           case "number":
             if (Math.floor(value) === value && value >= JS_INT_MIN && value <= JS_INT_MAX) {
               if (value >= BSON_INT32_MIN && value <= BSON_INT32_MAX) {
-                return (name != null ? ByteUtils.utf8ByteLength(name) + 1 : 0) + (4 + 1);
+                return ByteUtils.utf8ByteLength(name) + 1 + (4 + 1);
               } else {
-                return (name != null ? ByteUtils.utf8ByteLength(name) + 1 : 0) + (8 + 1);
+                return ByteUtils.utf8ByteLength(name) + 1 + (8 + 1);
               }
             } else {
-              return (name != null ? ByteUtils.utf8ByteLength(name) + 1 : 0) + (8 + 1);
+              return ByteUtils.utf8ByteLength(name) + 1 + (8 + 1);
             }
           case "undefined":
             if (isArray || !ignoreUndefined)
-              return (name != null ? ByteUtils.utf8ByteLength(name) + 1 : 0) + 1;
+              return ByteUtils.utf8ByteLength(name) + 1 + 1;
             return 0;
           case "boolean":
-            return (name != null ? ByteUtils.utf8ByteLength(name) + 1 : 0) + (1 + 1);
+            return ByteUtils.utf8ByteLength(name) + 1 + (1 + 1);
           case "object":
             if (value != null && typeof value._bsontype === "string" && value[BSON_VERSION_SYMBOL] !== BSON_MAJOR_VERSION) {
               throw new BSONVersionError();
             } else if (value == null || value._bsontype === "MinKey" || value._bsontype === "MaxKey") {
-              return (name != null ? ByteUtils.utf8ByteLength(name) + 1 : 0) + 1;
+              return ByteUtils.utf8ByteLength(name) + 1 + 1;
             } else if (value._bsontype === "ObjectId") {
-              return (name != null ? ByteUtils.utf8ByteLength(name) + 1 : 0) + (12 + 1);
+              return ByteUtils.utf8ByteLength(name) + 1 + (12 + 1);
             } else if (value instanceof Date || isDate(value)) {
-              return (name != null ? ByteUtils.utf8ByteLength(name) + 1 : 0) + (8 + 1);
+              return ByteUtils.utf8ByteLength(name) + 1 + (8 + 1);
             } else if (ArrayBuffer.isView(value) || value instanceof ArrayBuffer || isAnyArrayBuffer(value)) {
-              return (name != null ? ByteUtils.utf8ByteLength(name) + 1 : 0) + (1 + 4 + 1) + value.byteLength;
+              return ByteUtils.utf8ByteLength(name) + 1 + (1 + 4 + 1) + value.byteLength;
             } else if (value._bsontype === "Long" || value._bsontype === "Double" || value._bsontype === "Timestamp") {
-              return (name != null ? ByteUtils.utf8ByteLength(name) + 1 : 0) + (8 + 1);
+              return ByteUtils.utf8ByteLength(name) + 1 + (8 + 1);
             } else if (value._bsontype === "Decimal128") {
-              return (name != null ? ByteUtils.utf8ByteLength(name) + 1 : 0) + (16 + 1);
+              return ByteUtils.utf8ByteLength(name) + 1 + (16 + 1);
             } else if (value._bsontype === "Code") {
               if (value.scope != null && Object.keys(value.scope).length > 0) {
-                return (name != null ? ByteUtils.utf8ByteLength(name) + 1 : 0) + 1 + 4 + 4 + ByteUtils.utf8ByteLength(value.code.toString()) + 1 + internalCalculateObjectSize(value.scope, serializeFunctions, ignoreUndefined);
+                objectStack.push({ obj: value.scope, ignoreUndefined });
+                return ByteUtils.utf8ByteLength(name) + 1 + 1 + 4 + 4 + ByteUtils.utf8ByteLength(value.code.toString()) + 1;
               } else {
-                return (name != null ? ByteUtils.utf8ByteLength(name) + 1 : 0) + 1 + 4 + ByteUtils.utf8ByteLength(value.code.toString()) + 1;
+                return ByteUtils.utf8ByteLength(name) + 1 + 1 + 4 + ByteUtils.utf8ByteLength(value.code.toString()) + 1;
               }
             } else if (value._bsontype === "Binary") {
               const binary = value;
               if (binary.sub_type === Binary.SUBTYPE_BYTE_ARRAY) {
-                return (name != null ? ByteUtils.utf8ByteLength(name) + 1 : 0) + (binary.position + 1 + 4 + 1 + 4);
+                return ByteUtils.utf8ByteLength(name) + 1 + (binary.position + 1 + 4 + 1 + 4);
               } else {
-                return (name != null ? ByteUtils.utf8ByteLength(name) + 1 : 0) + (binary.position + 1 + 4 + 1);
+                return ByteUtils.utf8ByteLength(name) + 1 + (binary.position + 1 + 4 + 1);
               }
             } else if (value._bsontype === "Symbol") {
-              return (name != null ? ByteUtils.utf8ByteLength(name) + 1 : 0) + ByteUtils.utf8ByteLength(value.value) + 4 + 1 + 1;
+              return ByteUtils.utf8ByteLength(name) + 1 + ByteUtils.utf8ByteLength(value.value) + 4 + 1 + 1;
             } else if (value._bsontype === "DBRef") {
               const ordered_values = Object.assign({
                 $ref: value.collection,
@@ -2769,21 +2813,23 @@
               if (value.db != null) {
                 ordered_values["$db"] = value.db;
               }
-              return (name != null ? ByteUtils.utf8ByteLength(name) + 1 : 0) + 1 + internalCalculateObjectSize(ordered_values, serializeFunctions, ignoreUndefined);
+              objectStack.push({ obj: ordered_values, ignoreUndefined: true });
+              return ByteUtils.utf8ByteLength(name) + 1 + 1;
             } else if (value instanceof RegExp || isRegExp(value)) {
-              return (name != null ? ByteUtils.utf8ByteLength(name) + 1 : 0) + 1 + ByteUtils.utf8ByteLength(value.source) + 1 + (value.global ? 1 : 0) + (value.ignoreCase ? 1 : 0) + (value.multiline ? 1 : 0) + 1;
+              return ByteUtils.utf8ByteLength(name) + 1 + 1 + ByteUtils.utf8ByteLength(value.source) + 1 + (value.global ? 1 : 0) + (value.ignoreCase ? 1 : 0) + (value.multiline ? 1 : 0) + 1;
             } else if (value._bsontype === "BSONRegExp") {
-              return (name != null ? ByteUtils.utf8ByteLength(name) + 1 : 0) + 1 + ByteUtils.utf8ByteLength(value.pattern) + 1 + ByteUtils.utf8ByteLength(value.options) + 1;
+              return ByteUtils.utf8ByteLength(name) + 1 + 1 + ByteUtils.utf8ByteLength(value.pattern) + 1 + ByteUtils.utf8ByteLength(value.options) + 1;
             } else {
-              return (name != null ? ByteUtils.utf8ByteLength(name) + 1 : 0) + internalCalculateObjectSize(value, serializeFunctions, ignoreUndefined) + 1;
+              objectStack.push({ obj: value, ignoreUndefined });
+              return ByteUtils.utf8ByteLength(name) + 1 + 1;
             }
           case "function":
             if (serializeFunctions) {
-              return (name != null ? ByteUtils.utf8ByteLength(name) + 1 : 0) + 1 + 4 + ByteUtils.utf8ByteLength(value.toString()) + 1;
+              return ByteUtils.utf8ByteLength(name) + 1 + 1 + 4 + ByteUtils.utf8ByteLength(value.toString()) + 1;
             }
             return 0;
           case "bigint":
-            return (name != null ? ByteUtils.utf8ByteLength(name) + 1 : 0) + (8 + 1);
+            return ByteUtils.utf8ByteLength(name) + 1 + (8 + 1);
           case "symbol":
             return 0;
           default:
@@ -2982,7 +3028,27 @@
         return deserializeObject(buffer2, index, options, isArray);
       }
       var allowedDBRefKeys = /^\$ref$|^\$id$|^\$db$/;
+      function assignValue(dest, name, value) {
+        if (name === "__proto__") {
+          Object.defineProperty(dest, name, {
+            value,
+            writable: true,
+            enumerable: true,
+            configurable: true
+          });
+        } else {
+          dest[name] = value;
+        }
+      }
+      function toPotentialDbRef(doc) {
+        if (isDBRefLike(doc)) {
+          const { $ref, $id, $db, ...fields } = doc;
+          return new DBRef($ref, $id, $db, fields);
+        }
+        return doc;
+      }
       function deserializeObject(buffer2, index, options, isArray = false) {
+        options = { ...options };
         const fieldsAsRaw = options["fieldsAsRaw"] == null ? null : options["fieldsAsRaw"];
         const raw = options["raw"] == null ? false : options["raw"];
         const bsonRegExp = typeof options["bsonRegExp"] === "boolean" ? options["bsonRegExp"] : false;
@@ -3032,30 +3098,77 @@
         index += 4;
         if (size < 5 || size > buffer2.length)
           throw new BSONError("corrupt bson message");
-        const object = isArray ? [] : {};
+        const rootObject = isArray ? [] : {};
         let arrayIndex = 0;
         let isPossibleDBRef = isArray ? false : null;
+        let currentFrame = null;
+        let currentDest = rootObject;
+        let currentIsArray = isArray;
         while (true) {
           const elementType = buffer2[index++];
-          if (elementType === 0)
-            break;
+          if (elementType === 0) {
+            if (currentFrame) {
+              if (index === currentFrame.lastIndex) {
+                const completedFrame = currentFrame;
+                currentFrame = completedFrame.prev;
+                if (currentFrame === null) {
+                  currentDest = rootObject;
+                  currentIsArray = isArray;
+                } else {
+                  currentDest = currentFrame.holdingDocument;
+                  currentIsArray = currentFrame.isArray;
+                }
+                let result = completedFrame.holdingDocument;
+                switch (completedFrame.elementType) {
+                  case BSON_DATA_OBJECT:
+                    if (completedFrame.isPossibleDBRef) {
+                      result = toPotentialDbRef(result);
+                    }
+                    break;
+                  case BSON_DATA_ARRAY:
+                    break;
+                  case BSON_DATA_CODE_W_SCOPE:
+                    result = new Code(completedFrame.functionString, completedFrame.holdingDocument);
+                    break;
+                  default:
+                    throw new BSONError("Unexpected element type in frame stack");
+                }
+                assignValue(currentDest, completedFrame.propertyName, result);
+                continue;
+              } else {
+                if (currentFrame.elementType === BSON_DATA_ARRAY) {
+                  throw new BSONError("corrupted array bson");
+                }
+                throw new BSONError("Bad BSON Document: object not properly terminated");
+              }
+            } else {
+              break;
+            }
+          }
           let i6 = index;
           while (buffer2[i6] !== 0 && i6 < buffer2.length) {
             i6++;
           }
           if (i6 >= buffer2.byteLength)
             throw new BSONError("Bad BSON Document: illegal CString");
-          const name = isArray ? arrayIndex++ : ByteUtils.toUTF8(buffer2, index, i6, false);
-          let shouldValidateKey = true;
-          if (globalUTFValidation || utf8KeysSet?.has(name)) {
+          const name = currentIsArray ? currentFrame !== null ? currentFrame.arrayIndex++ : arrayIndex++ : ByteUtils.toUTF8(buffer2, index, i6, false);
+          let shouldValidateKey;
+          if (currentFrame !== null) {
+            shouldValidateKey = currentFrame.validationSetting;
+          } else if (globalUTFValidation || utf8KeysSet?.has(name)) {
             shouldValidateKey = validationSetting;
           } else {
             shouldValidateKey = !validationSetting;
           }
-          if (isPossibleDBRef !== false && name[0] === "$") {
+          if (currentFrame !== null) {
+            if (currentFrame.isPossibleDBRef !== false && typeof name === "string" && name[0] === "$") {
+              currentFrame.isPossibleDBRef = allowedDBRefKeys.test(name);
+            }
+          } else if (isPossibleDBRef !== false && name[0] === "$") {
             isPossibleDBRef = allowedDBRefKeys.test(name);
           }
           let value;
+          let isDeferredValue = false;
           index = i6 + 1;
           if (elementType === BSON_DATA_STRING) {
             const stringSize = NumberUtils.getInt32LE(buffer2, index);
@@ -3092,37 +3205,56 @@
               throw new BSONError("illegal boolean type value");
             value = buffer2[index++] === 1;
           } else if (elementType === BSON_DATA_OBJECT) {
-            const _index = index;
             const objectSize = NumberUtils.getInt32LE(buffer2, index);
-            if (objectSize <= 0 || objectSize > buffer2.length - index)
+            if (objectSize < 5 || objectSize > buffer2.length - index)
               throw new BSONError("bad embedded document length in bson");
-            if (raw) {
+            if (raw || (currentFrame?.raw ?? false)) {
               value = buffer2.subarray(index, index + objectSize);
+              index = index + objectSize;
             } else {
-              let objectOptions = options;
-              if (!globalUTFValidation) {
-                objectOptions = { ...options, validation: { utf8: shouldValidateKey } };
-              }
-              value = deserializeObject(buffer2, _index, objectOptions, false);
+              isDeferredValue = true;
+              const objectFrame = {
+                holdingDocument: {},
+                elementType: BSON_DATA_OBJECT,
+                propertyName: name,
+                functionString: null,
+                lastIndex: index + objectSize,
+                isArray: false,
+                arrayIndex: 0,
+                raw: false,
+                isPossibleDBRef: null,
+                validationSetting: shouldValidateKey,
+                prev: currentFrame
+              };
+              currentFrame = objectFrame;
+              currentDest = objectFrame.holdingDocument;
+              currentIsArray = false;
+              index = index + 4;
             }
-            index = index + objectSize;
           } else if (elementType === BSON_DATA_ARRAY) {
-            const _index = index;
             const objectSize = NumberUtils.getInt32LE(buffer2, index);
-            let arrayOptions = options;
+            if (objectSize < 5 || objectSize > buffer2.length - index)
+              throw new BSONError("bad embedded array length in bson");
             const stopIndex = index + objectSize;
-            if (fieldsAsRaw && fieldsAsRaw[name]) {
-              arrayOptions = { ...options, raw: true };
-            }
-            if (!globalUTFValidation) {
-              arrayOptions = { ...arrayOptions, validation: { utf8: shouldValidateKey } };
-            }
-            value = deserializeObject(buffer2, _index, arrayOptions, true);
-            index = index + objectSize;
-            if (buffer2[index - 1] !== 0)
-              throw new BSONError("invalid array terminator byte");
-            if (index !== stopIndex)
-              throw new BSONError("corrupted array bson");
+            const arrayRaw = !!(fieldsAsRaw && fieldsAsRaw[name]) || (currentFrame?.raw ?? false);
+            isDeferredValue = true;
+            const arrayFrame = {
+              holdingDocument: [],
+              elementType: BSON_DATA_ARRAY,
+              propertyName: name,
+              functionString: null,
+              lastIndex: stopIndex,
+              isArray: true,
+              arrayIndex: 0,
+              raw: arrayRaw,
+              isPossibleDBRef: false,
+              validationSetting: shouldValidateKey,
+              prev: currentFrame
+            };
+            currentFrame = arrayFrame;
+            currentDest = arrayFrame.holdingDocument;
+            currentIsArray = true;
+            index = index + 4;
           } else if (elementType === BSON_DATA_UNDEFINED) {
             value = void 0;
           } else if (elementType === BSON_DATA_NULL) {
@@ -3269,15 +3401,32 @@
             index = index + stringSize;
             const _index = index;
             const objectSize = NumberUtils.getInt32LE(buffer2, index);
-            const scopeObject = deserializeObject(buffer2, _index, options, false);
-            index = index + objectSize;
+            if (objectSize < 5 || objectSize > buffer2.length - index)
+              throw new BSONError("bad scope document size in code_w_scope");
             if (totalSize < 4 + 4 + objectSize + stringSize) {
               throw new BSONError("code_w_scope total size is too short, truncating scope");
             }
             if (totalSize > 4 + 4 + objectSize + stringSize) {
               throw new BSONError("code_w_scope total size is too long, clips outer document");
             }
-            value = new Code(functionString, scopeObject);
+            isDeferredValue = true;
+            const scopeFrame = {
+              holdingDocument: {},
+              elementType: BSON_DATA_CODE_W_SCOPE,
+              propertyName: name,
+              functionString,
+              lastIndex: _index + objectSize,
+              isArray: false,
+              arrayIndex: 0,
+              raw: false,
+              isPossibleDBRef: null,
+              validationSetting: shouldValidateKey,
+              prev: currentFrame
+            };
+            currentFrame = scopeFrame;
+            currentDest = scopeFrame.holdingDocument;
+            currentIsArray = false;
+            index = index + 4;
           } else if (elementType === BSON_DATA_DBPOINTER) {
             const stringSize = NumberUtils.getInt32LE(buffer2, index);
             index += 4;
@@ -3294,17 +3443,14 @@
           } else {
             throw new BSONError(`Detected unknown BSON type ${elementType.toString(16)} for fieldname "${name}"`);
           }
-          if (name === "__proto__") {
-            Object.defineProperty(object, name, {
-              value,
-              writable: true,
-              enumerable: true,
-              configurable: true
-            });
-          } else {
-            object[name] = value;
+          if (!isDeferredValue) {
+            assignValue(currentDest, name, value);
           }
         }
+        if (currentFrame !== null) {
+          throw new BSONError("corrupted bson, more objects expected based on the current document size");
+        }
+        const object = rootObject;
         if (size !== index - startIndex) {
           if (isArray)
             throw new BSONError("corrupt array bson");
@@ -3312,14 +3458,7 @@
         }
         if (!isPossibleDBRef)
           return object;
-        if (isDBRefLike(object)) {
-          const copy = Object.assign({}, object);
-          delete copy.$ref;
-          delete copy.$id;
-          delete copy.$db;
-          return new DBRef(object.$ref, object.$id, object.$db, copy);
-        }
-        return object;
+        return toPotentialDbRef(object);
       }
       var regexp = /\x00/;
       var ignoreKeys = /* @__PURE__ */ new Set(["$db", "$ref", "$id", "$clusterTime"]);
@@ -3420,7 +3559,7 @@
       function serializeMinMax(buffer2, key, value, index) {
         if (value === null) {
           buffer2[index++] = BSON_DATA_NULL;
-        } else if (value._bsontype === "MinKey") {
+        } else if (value[bsonType] === "MinKey") {
           buffer2[index++] = BSON_DATA_MIN_KEY;
         } else {
           buffer2[index++] = BSON_DATA_MAX_KEY;
@@ -3455,19 +3594,6 @@
         index = index + size;
         return index;
       }
-      function serializeObject(buffer2, key, value, index, checkKeys, depth, serializeFunctions, ignoreUndefined, path) {
-        if (path.has(value)) {
-          throw new BSONError("Cannot convert circular structure to BSON");
-        }
-        path.add(value);
-        buffer2[index++] = Array.isArray(value) ? BSON_DATA_ARRAY : BSON_DATA_OBJECT;
-        const numberOfWrittenBytes = ByteUtils.encodeUTF8Into(buffer2, key, index);
-        index = index + numberOfWrittenBytes;
-        buffer2[index++] = 0;
-        const endIndex = serializeInto(buffer2, value, checkKeys, index, depth + 1, serializeFunctions, ignoreUndefined, path);
-        path.delete(value);
-        return endIndex;
-      }
       function serializeDecimal128(buffer2, key, value, index) {
         buffer2[index++] = BSON_DATA_DECIMAL128;
         const numberOfWrittenBytes = ByteUtils.encodeUTF8Into(buffer2, key, index);
@@ -3478,7 +3604,7 @@
         return index + 16;
       }
       function serializeLong(buffer2, key, value, index) {
-        buffer2[index++] = value._bsontype === "Long" ? BSON_DATA_LONG : BSON_DATA_TIMESTAMP;
+        buffer2[index++] = value[bsonType] === "Long" ? BSON_DATA_LONG : BSON_DATA_TIMESTAMP;
         const numberOfWrittenBytes = ByteUtils.encodeUTF8Into(buffer2, key, index);
         index = index + numberOfWrittenBytes;
         buffer2[index++] = 0;
@@ -3515,37 +3641,6 @@
         NumberUtils.setInt32LE(buffer2, index, size);
         index = index + 4 + size - 1;
         buffer2[index++] = 0;
-        return index;
-      }
-      function serializeCode(buffer2, key, value, index, checkKeys = false, depth = 0, serializeFunctions = false, ignoreUndefined = true, path) {
-        if (value.scope && typeof value.scope === "object") {
-          buffer2[index++] = BSON_DATA_CODE_W_SCOPE;
-          const numberOfWrittenBytes = ByteUtils.encodeUTF8Into(buffer2, key, index);
-          index = index + numberOfWrittenBytes;
-          buffer2[index++] = 0;
-          let startIndex = index;
-          const functionString = value.code;
-          index = index + 4;
-          const codeSize = ByteUtils.encodeUTF8Into(buffer2, functionString, index + 4) + 1;
-          NumberUtils.setInt32LE(buffer2, index, codeSize);
-          buffer2[index + 4 + codeSize - 1] = 0;
-          index = index + codeSize + 4;
-          const endIndex = serializeInto(buffer2, value.scope, checkKeys, index, depth + 1, serializeFunctions, ignoreUndefined, path);
-          index = endIndex - 1;
-          const totalSize = endIndex - startIndex;
-          startIndex += NumberUtils.setInt32LE(buffer2, startIndex, totalSize);
-          buffer2[index++] = 0;
-        } else {
-          buffer2[index++] = BSON_DATA_CODE;
-          const numberOfWrittenBytes = ByteUtils.encodeUTF8Into(buffer2, key, index);
-          index = index + numberOfWrittenBytes;
-          buffer2[index++] = 0;
-          const functionString = value.code.toString();
-          const size = ByteUtils.encodeUTF8Into(buffer2, functionString, index + 4) + 1;
-          NumberUtils.setInt32LE(buffer2, index, size);
-          index = index + 4 + size - 1;
-          buffer2[index++] = 0;
-        }
         return index;
       }
       function serializeBinary(buffer2, key, value, index) {
@@ -3586,26 +3681,59 @@
         buffer2[index++] = 0;
         return index;
       }
-      function serializeDBRef(buffer2, key, value, index, depth, serializeFunctions, path) {
-        buffer2[index++] = BSON_DATA_OBJECT;
-        const numberOfWrittenBytes = ByteUtils.encodeUTF8Into(buffer2, key, index);
-        index = index + numberOfWrittenBytes;
-        buffer2[index++] = 0;
-        let startIndex = index;
-        let output = {
-          $ref: value.collection || value.namespace,
-          $id: value.oid
-        };
-        if (value.db != null) {
-          output.$db = value.db;
+      function makeFrame(sourceObject, objectSizeIndex, codeSizeIndex, prev, checkKeys, ignoreUndefined) {
+        if (Array.isArray(sourceObject)) {
+          return {
+            sourceObject,
+            isArray: true,
+            objectSizeIndex,
+            codeSizeIndex,
+            iterTarget: sourceObject,
+            keys: null,
+            keyIndex: 0,
+            mapIterator: null,
+            prev,
+            checkKeys,
+            ignoreUndefined
+          };
         }
-        output = Object.assign(output, value.fields);
-        const endIndex = serializeInto(buffer2, output, false, index, depth + 1, serializeFunctions, true, path);
-        const size = endIndex - startIndex;
-        startIndex += NumberUtils.setInt32LE(buffer2, index, size);
-        return endIndex;
+        if (sourceObject instanceof Map || isMap(sourceObject)) {
+          return {
+            sourceObject,
+            isArray: false,
+            objectSizeIndex,
+            codeSizeIndex,
+            iterTarget: sourceObject,
+            keys: null,
+            keyIndex: 0,
+            mapIterator: sourceObject.entries(),
+            prev,
+            checkKeys,
+            ignoreUndefined
+          };
+        }
+        let target = sourceObject;
+        if (typeof target?.toBSON === "function") {
+          target = target.toBSON();
+          if (target != null && typeof target !== "object") {
+            throw new BSONError("toBSON function did not return an object");
+          }
+        }
+        return {
+          sourceObject,
+          isArray: false,
+          objectSizeIndex,
+          codeSizeIndex,
+          iterTarget: target,
+          keys: Object.keys(target),
+          keyIndex: 0,
+          mapIterator: null,
+          prev,
+          checkKeys,
+          ignoreUndefined
+        };
       }
-      function serializeInto(buffer2, object, checkKeys, startingIndex, depth, serializeFunctions, ignoreUndefined, path) {
+      function serializeInto(buffer2, object, checkKeys, startingIndex, serializeFunctions, ignoreUndefined, path) {
         if (path == null) {
           if (object == null) {
             buffer2[0] = 5;
@@ -3628,235 +3756,174 @@
           path = /* @__PURE__ */ new Set();
         }
         path.add(object);
+        let currentFrame = makeFrame(object, startingIndex, null, null, checkKeys, ignoreUndefined);
         let index = startingIndex + 4;
-        if (Array.isArray(object)) {
-          for (let i6 = 0; i6 < object.length; i6++) {
-            const key = `${i6}`;
-            let value = object[i6];
-            if (typeof value?.toBSON === "function") {
-              value = value.toBSON();
-            }
-            const type = typeof value;
-            if (value === void 0) {
-              index = serializeNull(buffer2, key, value, index);
-            } else if (value === null) {
-              index = serializeNull(buffer2, key, value, index);
-            } else if (type === "string") {
-              index = serializeString(buffer2, key, value, index);
-            } else if (type === "number") {
-              index = serializeNumber(buffer2, key, value, index);
-            } else if (type === "bigint") {
-              index = serializeBigInt(buffer2, key, value, index);
-            } else if (type === "boolean") {
-              index = serializeBoolean(buffer2, key, value, index);
-            } else if (type === "object" && value._bsontype == null) {
-              if (value instanceof Date || isDate(value)) {
-                index = serializeDate(buffer2, key, value, index);
-              } else if (value instanceof Uint8Array || isUint8Array(value)) {
-                index = serializeBuffer(buffer2, key, value, index);
-              } else if (value instanceof RegExp || isRegExp(value)) {
-                index = serializeRegExp(buffer2, key, value, index);
-              } else {
-                index = serializeObject(buffer2, key, value, index, checkKeys, depth, serializeFunctions, ignoreUndefined, path);
+        while (currentFrame !== null) {
+          const frame = currentFrame;
+          let key;
+          let value;
+          if (frame.mapIterator !== null) {
+            const next = frame.mapIterator.next();
+            if (next.done) {
+              buffer2[index++] = 0;
+              NumberUtils.setInt32LE(buffer2, frame.objectSizeIndex, index - frame.objectSizeIndex);
+              if (frame.codeSizeIndex !== null) {
+                NumberUtils.setInt32LE(buffer2, frame.codeSizeIndex, index - frame.codeSizeIndex);
               }
-            } else if (type === "object") {
-              if (value[BSON_VERSION_SYMBOL] !== BSON_MAJOR_VERSION) {
-                throw new BSONVersionError();
-              } else if (value._bsontype === "ObjectId") {
-                index = serializeObjectId(buffer2, key, value, index);
-              } else if (value._bsontype === "Decimal128") {
-                index = serializeDecimal128(buffer2, key, value, index);
-              } else if (value._bsontype === "Long" || value._bsontype === "Timestamp") {
-                index = serializeLong(buffer2, key, value, index);
-              } else if (value._bsontype === "Double") {
-                index = serializeDouble(buffer2, key, value, index);
-              } else if (value._bsontype === "Code") {
-                index = serializeCode(buffer2, key, value, index, checkKeys, depth, serializeFunctions, ignoreUndefined, path);
-              } else if (value._bsontype === "Binary") {
-                index = serializeBinary(buffer2, key, value, index);
-              } else if (value._bsontype === "BSONSymbol") {
-                index = serializeSymbol(buffer2, key, value, index);
-              } else if (value._bsontype === "DBRef") {
-                index = serializeDBRef(buffer2, key, value, index, depth, serializeFunctions, path);
-              } else if (value._bsontype === "BSONRegExp") {
-                index = serializeBSONRegExp(buffer2, key, value, index);
-              } else if (value._bsontype === "Int32") {
-                index = serializeInt32(buffer2, key, value, index);
-              } else if (value._bsontype === "MinKey" || value._bsontype === "MaxKey") {
-                index = serializeMinMax(buffer2, key, value, index);
-              } else if (typeof value._bsontype !== "undefined") {
-                throw new BSONError(`Unrecognized or invalid _bsontype: ${String(value._bsontype)}`);
-              }
-            } else if (type === "function" && serializeFunctions) {
-              index = serializeFunction(buffer2, key, value, index);
-            }
-          }
-        } else if (object instanceof Map || isMap(object)) {
-          const iterator = object.entries();
-          let done = false;
-          while (!done) {
-            const entry = iterator.next();
-            done = !!entry.done;
-            if (done)
+              path.delete(frame.sourceObject);
+              currentFrame = frame.prev;
               continue;
-            const key = entry.value ? entry.value[0] : void 0;
-            let value = entry.value ? entry.value[1] : void 0;
-            if (typeof value?.toBSON === "function") {
-              value = value.toBSON();
             }
-            const type = typeof value;
-            if (typeof key === "string" && !ignoreKeys.has(key)) {
-              if (key.match(regexp) != null) {
-                throw new BSONError("key " + key + " must not contain null bytes");
+            key = next.value[0];
+            value = next.value[1];
+          } else if (frame.keys !== null) {
+            if (frame.keyIndex >= frame.keys.length) {
+              buffer2[index++] = 0;
+              NumberUtils.setInt32LE(buffer2, frame.objectSizeIndex, index - frame.objectSizeIndex);
+              if (frame.codeSizeIndex !== null) {
+                NumberUtils.setInt32LE(buffer2, frame.codeSizeIndex, index - frame.codeSizeIndex);
               }
-              if (checkKeys) {
-                if ("$" === key[0]) {
-                  throw new BSONError("key " + key + " must not start with '$'");
-                } else if (key.includes(".")) {
-                  throw new BSONError("key " + key + " must not contain '.'");
-                }
-              }
+              path.delete(frame.sourceObject);
+              currentFrame = frame.prev;
+              continue;
             }
-            if (value === void 0) {
-              if (ignoreUndefined === false)
-                index = serializeNull(buffer2, key, value, index);
-            } else if (value === null) {
-              index = serializeNull(buffer2, key, value, index);
-            } else if (type === "string") {
-              index = serializeString(buffer2, key, value, index);
-            } else if (type === "number") {
-              index = serializeNumber(buffer2, key, value, index);
-            } else if (type === "bigint") {
-              index = serializeBigInt(buffer2, key, value, index);
-            } else if (type === "boolean") {
-              index = serializeBoolean(buffer2, key, value, index);
-            } else if (type === "object" && value._bsontype == null) {
-              if (value instanceof Date || isDate(value)) {
-                index = serializeDate(buffer2, key, value, index);
-              } else if (value instanceof Uint8Array || isUint8Array(value)) {
-                index = serializeBuffer(buffer2, key, value, index);
-              } else if (value instanceof RegExp || isRegExp(value)) {
-                index = serializeRegExp(buffer2, key, value, index);
-              } else {
-                index = serializeObject(buffer2, key, value, index, checkKeys, depth, serializeFunctions, ignoreUndefined, path);
+            key = frame.keys[frame.keyIndex++];
+            value = frame.iterTarget[key];
+          } else {
+            const arr = frame.iterTarget;
+            if (frame.keyIndex >= arr.length) {
+              buffer2[index++] = 0;
+              NumberUtils.setInt32LE(buffer2, frame.objectSizeIndex, index - frame.objectSizeIndex);
+              if (frame.codeSizeIndex !== null) {
+                NumberUtils.setInt32LE(buffer2, frame.codeSizeIndex, index - frame.codeSizeIndex);
               }
-            } else if (type === "object") {
-              if (value[BSON_VERSION_SYMBOL] !== BSON_MAJOR_VERSION) {
-                throw new BSONVersionError();
-              } else if (value._bsontype === "ObjectId") {
-                index = serializeObjectId(buffer2, key, value, index);
-              } else if (value._bsontype === "Decimal128") {
-                index = serializeDecimal128(buffer2, key, value, index);
-              } else if (value._bsontype === "Long" || value._bsontype === "Timestamp") {
-                index = serializeLong(buffer2, key, value, index);
-              } else if (value._bsontype === "Double") {
-                index = serializeDouble(buffer2, key, value, index);
-              } else if (value._bsontype === "Code") {
-                index = serializeCode(buffer2, key, value, index, checkKeys, depth, serializeFunctions, ignoreUndefined, path);
-              } else if (value._bsontype === "Binary") {
-                index = serializeBinary(buffer2, key, value, index);
-              } else if (value._bsontype === "BSONSymbol") {
-                index = serializeSymbol(buffer2, key, value, index);
-              } else if (value._bsontype === "DBRef") {
-                index = serializeDBRef(buffer2, key, value, index, depth, serializeFunctions, path);
-              } else if (value._bsontype === "BSONRegExp") {
-                index = serializeBSONRegExp(buffer2, key, value, index);
-              } else if (value._bsontype === "Int32") {
-                index = serializeInt32(buffer2, key, value, index);
-              } else if (value._bsontype === "MinKey" || value._bsontype === "MaxKey") {
-                index = serializeMinMax(buffer2, key, value, index);
-              } else if (typeof value._bsontype !== "undefined") {
-                throw new BSONError(`Unrecognized or invalid _bsontype: ${String(value._bsontype)}`);
+              path.delete(frame.sourceObject);
+              currentFrame = frame.prev;
+              continue;
+            }
+            const i6 = frame.keyIndex++;
+            key = String(i6);
+            value = arr[i6];
+          }
+          if (typeof value?.toBSON === "function") {
+            value = value.toBSON();
+          }
+          if (!frame.isArray && typeof key === "string" && !(key[0] === "$" && ignoreKeys.has(key))) {
+            if (regexp.test(key)) {
+              throw new BSONError("key " + key + " must not contain null bytes");
+            }
+            if (frame.checkKeys) {
+              if ("$" === key[0]) {
+                throw new BSONError("key " + key + " must not start with '$'");
+              } else if (key.includes(".")) {
+                throw new BSONError("key " + key + " must not contain '.'");
               }
-            } else if (type === "function" && serializeFunctions) {
-              index = serializeFunction(buffer2, key, value, index);
             }
           }
-        } else {
-          if (typeof object?.toBSON === "function") {
-            object = object.toBSON();
-            if (object != null && typeof object !== "object") {
-              throw new BSONError("toBSON function did not return an object");
-            }
-          }
-          for (const key of Object.keys(object)) {
-            let value = object[key];
-            if (typeof value?.toBSON === "function") {
-              value = value.toBSON();
-            }
-            const type = typeof value;
-            if (typeof key === "string" && !ignoreKeys.has(key)) {
-              if (key.match(regexp) != null) {
-                throw new BSONError("key " + key + " must not contain null bytes");
-              }
-              if (checkKeys) {
-                if ("$" === key[0]) {
-                  throw new BSONError("key " + key + " must not start with '$'");
-                } else if (key.includes(".")) {
-                  throw new BSONError("key " + key + " must not contain '.'");
-                }
-              }
-            }
-            if (value === void 0) {
-              if (ignoreUndefined === false)
-                index = serializeNull(buffer2, key, value, index);
-            } else if (value === null) {
+          const type = typeof value;
+          if (value === void 0) {
+            if (frame.isArray || frame.ignoreUndefined === false) {
               index = serializeNull(buffer2, key, value, index);
-            } else if (type === "string") {
-              index = serializeString(buffer2, key, value, index);
-            } else if (type === "number") {
-              index = serializeNumber(buffer2, key, value, index);
-            } else if (type === "bigint") {
-              index = serializeBigInt(buffer2, key, value, index);
-            } else if (type === "boolean") {
-              index = serializeBoolean(buffer2, key, value, index);
-            } else if (type === "object" && value._bsontype == null) {
-              if (value instanceof Date || isDate(value)) {
-                index = serializeDate(buffer2, key, value, index);
-              } else if (value instanceof Uint8Array || isUint8Array(value)) {
-                index = serializeBuffer(buffer2, key, value, index);
-              } else if (value instanceof RegExp || isRegExp(value)) {
-                index = serializeRegExp(buffer2, key, value, index);
-              } else {
-                index = serializeObject(buffer2, key, value, index, checkKeys, depth, serializeFunctions, ignoreUndefined, path);
-              }
-            } else if (type === "object") {
-              if (value[BSON_VERSION_SYMBOL] !== BSON_MAJOR_VERSION) {
-                throw new BSONVersionError();
-              } else if (value._bsontype === "ObjectId") {
-                index = serializeObjectId(buffer2, key, value, index);
-              } else if (value._bsontype === "Decimal128") {
-                index = serializeDecimal128(buffer2, key, value, index);
-              } else if (value._bsontype === "Long" || value._bsontype === "Timestamp") {
-                index = serializeLong(buffer2, key, value, index);
-              } else if (value._bsontype === "Double") {
-                index = serializeDouble(buffer2, key, value, index);
-              } else if (value._bsontype === "Code") {
-                index = serializeCode(buffer2, key, value, index, checkKeys, depth, serializeFunctions, ignoreUndefined, path);
-              } else if (value._bsontype === "Binary") {
-                index = serializeBinary(buffer2, key, value, index);
-              } else if (value._bsontype === "BSONSymbol") {
-                index = serializeSymbol(buffer2, key, value, index);
-              } else if (value._bsontype === "DBRef") {
-                index = serializeDBRef(buffer2, key, value, index, depth, serializeFunctions, path);
-              } else if (value._bsontype === "BSONRegExp") {
-                index = serializeBSONRegExp(buffer2, key, value, index);
-              } else if (value._bsontype === "Int32") {
-                index = serializeInt32(buffer2, key, value, index);
-              } else if (value._bsontype === "MinKey" || value._bsontype === "MaxKey") {
-                index = serializeMinMax(buffer2, key, value, index);
-              } else if (typeof value._bsontype !== "undefined") {
-                throw new BSONError(`Unrecognized or invalid _bsontype: ${String(value._bsontype)}`);
-              }
-            } else if (type === "function" && serializeFunctions) {
-              index = serializeFunction(buffer2, key, value, index);
             }
+          } else if (value === null) {
+            index = serializeNull(buffer2, key, value, index);
+          } else if (type === "string") {
+            index = serializeString(buffer2, key, value, index);
+          } else if (type === "number") {
+            index = serializeNumber(buffer2, key, value, index);
+          } else if (type === "bigint") {
+            index = serializeBigInt(buffer2, key, value, index);
+          } else if (type === "boolean") {
+            index = serializeBoolean(buffer2, key, value, index);
+          } else if (type === "object" && value._bsontype == null) {
+            if (value instanceof Date || isDate(value)) {
+              index = serializeDate(buffer2, key, value, index);
+            } else if (value instanceof Uint8Array || isUint8Array(value)) {
+              index = serializeBuffer(buffer2, key, value, index);
+            } else if (value instanceof RegExp || isRegExp(value)) {
+              index = serializeRegExp(buffer2, key, value, index);
+            } else {
+              if (path.has(value)) {
+                throw new BSONError("Cannot convert circular structure to BSON");
+              }
+              const nestedIsArray = Array.isArray(value);
+              buffer2[index++] = nestedIsArray ? BSON_DATA_ARRAY : BSON_DATA_OBJECT;
+              index += ByteUtils.encodeUTF8Into(buffer2, key, index);
+              buffer2[index++] = 0;
+              const nestedStartIndex = index;
+              path.add(value);
+              currentFrame = makeFrame(value, nestedStartIndex, null, frame, frame.checkKeys, frame.ignoreUndefined);
+              index += 4;
+            }
+          } else if (type === "object") {
+            if (value[BSON_VERSION_SYMBOL] !== BSON_MAJOR_VERSION) {
+              throw new BSONVersionError();
+            }
+            const tag = value[bsonType];
+            if (tag === "ObjectId") {
+              index = serializeObjectId(buffer2, key, value, index);
+            } else if (tag === "Decimal128") {
+              index = serializeDecimal128(buffer2, key, value, index);
+            } else if (tag === "Long" || tag === "Timestamp") {
+              index = serializeLong(buffer2, key, value, index);
+            } else if (tag === "Double") {
+              index = serializeDouble(buffer2, key, value, index);
+            } else if (tag === "Code") {
+              const codeValue = value;
+              if (codeValue.scope && typeof codeValue.scope === "object") {
+                buffer2[index++] = BSON_DATA_CODE_W_SCOPE;
+                index += ByteUtils.encodeUTF8Into(buffer2, key, index);
+                buffer2[index++] = 0;
+                const codeTotalSizeIndex = index;
+                index += 4;
+                const functionString = codeValue.code;
+                const codeSize = ByteUtils.encodeUTF8Into(buffer2, functionString, index + 4) + 1;
+                NumberUtils.setInt32LE(buffer2, index, codeSize);
+                buffer2[index + 4 + codeSize - 1] = 0;
+                index = index + codeSize + 4;
+                const scope = codeValue.scope;
+                if (path.has(scope)) {
+                  throw new BSONError("Cannot convert circular structure to BSON");
+                }
+                path.add(scope);
+                currentFrame = makeFrame(scope, index, codeTotalSizeIndex, frame, frame.checkKeys, frame.ignoreUndefined);
+                index += 4;
+              } else {
+                buffer2[index++] = BSON_DATA_CODE;
+                index += ByteUtils.encodeUTF8Into(buffer2, key, index);
+                buffer2[index++] = 0;
+                const functionString = codeValue.code.toString();
+                const size = ByteUtils.encodeUTF8Into(buffer2, functionString, index + 4) + 1;
+                NumberUtils.setInt32LE(buffer2, index, size);
+                index = index + 4 + size - 1;
+                buffer2[index++] = 0;
+              }
+            } else if (tag === "Binary") {
+              index = serializeBinary(buffer2, key, value, index);
+            } else if (tag === "BSONSymbol") {
+              index = serializeSymbol(buffer2, key, value, index);
+            } else if (tag === "DBRef") {
+              const dbref = value;
+              const orderedValues = Object.assign({ $ref: dbref.collection, $id: dbref.oid }, dbref.db != null ? { $db: dbref.db } : null, dbref.fields);
+              buffer2[index++] = BSON_DATA_OBJECT;
+              index += ByteUtils.encodeUTF8Into(buffer2, key, index);
+              buffer2[index++] = 0;
+              path.add(orderedValues);
+              currentFrame = makeFrame(orderedValues, index, null, frame, false, true);
+              index += 4;
+            } else if (tag === "BSONRegExp") {
+              index = serializeBSONRegExp(buffer2, key, value, index);
+            } else if (tag === "Int32") {
+              index = serializeInt32(buffer2, key, value, index);
+            } else if (tag === "MinKey" || tag === "MaxKey") {
+              index = serializeMinMax(buffer2, key, value, index);
+            } else if (typeof value._bsontype !== "undefined") {
+              throw new BSONError(`Unrecognized or invalid _bsontype: ${String(value._bsontype)}`);
+            }
+          } else if (type === "function" && serializeFunctions) {
+            index = serializeFunction(buffer2, key, value, index);
           }
         }
-        path.delete(object);
-        buffer2[index++] = 0;
-        const size = index - startingIndex;
-        startingIndex += NumberUtils.setInt32LE(buffer2, startingIndex, size);
         return index;
       }
       function isBSONType(value) {
@@ -3999,7 +4066,7 @@
         if (Array.isArray(value))
           return serializeArray(value, options);
         if (value === void 0)
-          return null;
+          return options.ignoreUndefined ? void 0 : null;
         if (value instanceof Date || isDate(value)) {
           const dateNum = value.getTime(), inRange = dateNum > -1 && dateNum < 2534023188e5;
           if (options.legacy) {
@@ -4113,21 +4180,20 @@
           return deserializeValue(value, ejsonOptions);
         });
       }
-      function stringify2(value, replacer, space, options) {
-        if (space != null && typeof space === "object") {
-          options = space;
-          space = 0;
+      function stringify2(value, replacerOrOptions, spaceOrOptions, options) {
+        if (spaceOrOptions != null && typeof spaceOrOptions === "object") {
+          options = spaceOrOptions;
+          spaceOrOptions = void 0;
         }
-        if (replacer != null && typeof replacer === "object" && !Array.isArray(replacer)) {
-          options = replacer;
-          replacer = void 0;
-          space = 0;
+        if (replacerOrOptions != null && typeof replacerOrOptions === "object" && !Array.isArray(replacerOrOptions)) {
+          options = replacerOrOptions;
+          replacerOrOptions = void 0;
         }
         const serializeOptions = Object.assign({ relaxed: true, legacy: false }, options, {
           seenObjects: [{ propertyName: "(root)", obj: null }]
         });
         const doc = serializeValue(value, serializeOptions);
-        return JSON.stringify(doc, replacer, space);
+        return JSON.stringify(doc, replacerOrOptions, spaceOrOptions);
       }
       function EJSONserialize(value, options) {
         options = options || {};
@@ -4264,7 +4330,7 @@
         if (buffer.length < minInternalBufferSize) {
           buffer = ByteUtils.allocate(minInternalBufferSize);
         }
-        const serializationIndex = serializeInto(buffer, object, checkKeys, 0, 0, serializeFunctions, ignoreUndefined, null);
+        const serializationIndex = serializeInto(buffer, object, checkKeys, 0, serializeFunctions, ignoreUndefined, null);
         const finishedBuffer = ByteUtils.allocateUnsafe(serializationIndex);
         finishedBuffer.set(buffer.subarray(0, serializationIndex), 0);
         return finishedBuffer;
@@ -4274,7 +4340,7 @@
         const serializeFunctions = typeof options.serializeFunctions === "boolean" ? options.serializeFunctions : false;
         const ignoreUndefined = typeof options.ignoreUndefined === "boolean" ? options.ignoreUndefined : true;
         const startIndex = typeof options.index === "number" ? options.index : 0;
-        const serializationIndex = serializeInto(buffer, object, checkKeys, 0, 0, serializeFunctions, ignoreUndefined, null);
+        const serializationIndex = serializeInto(buffer, object, checkKeys, 0, serializeFunctions, ignoreUndefined, null);
         finalBuffer.set(buffer.subarray(0, serializationIndex), startIndex);
         return startIndex + serializationIndex - 1;
       }
@@ -4373,7 +4439,7 @@
     "node_modules/mongodb/lib/bson.js"(exports2) {
       "use strict";
       Object.defineProperty(exports2, "__esModule", { value: true });
-      exports2.toUTF8 = exports2.getBigInt64LE = exports2.getFloat64LE = exports2.getInt32LE = exports2.UUID = exports2.Timestamp = exports2.serialize = exports2.ObjectId = exports2.NumberUtils = exports2.MinKey = exports2.MaxKey = exports2.Long = exports2.Int32 = exports2.EJSON = exports2.Double = exports2.deserialize = exports2.Decimal128 = exports2.DBRef = exports2.Code = exports2.calculateObjectSize = exports2.BSONType = exports2.BSONSymbol = exports2.BSONRegExp = exports2.BSONError = exports2.BSON = exports2.Binary = void 0;
+      exports2.setUint32LE = exports2.readUint8 = exports2.readInt32LE = exports2.UUID = exports2.Timestamp = exports2.serialize = exports2.ObjectId = exports2.NumberUtils = exports2.MinKey = exports2.MaxKey = exports2.Long = exports2.Int32 = exports2.EJSON = exports2.Double = exports2.deserialize = exports2.Decimal128 = exports2.DBRef = exports2.Code = exports2.calculateObjectSize = exports2.ByteUtils = exports2.BSONType = exports2.BSONSymbol = exports2.BSONRegExp = exports2.BSONError = exports2.BSON = exports2.Binary = void 0;
       exports2.parseToElementsToArray = parseToElementsToArray;
       exports2.pluckBSONSerializeOptions = pluckBSONSerializeOptions;
       exports2.resolveBSONOptions = resolveBSONOptions;
@@ -4397,6 +4463,9 @@
       } });
       Object.defineProperty(exports2, "BSONType", { enumerable: true, get: function() {
         return bson_2.BSONType;
+      } });
+      Object.defineProperty(exports2, "ByteUtils", { enumerable: true, get: function() {
+        return bson_2.ByteUtils;
       } });
       Object.defineProperty(exports2, "calculateObjectSize", { enumerable: true, get: function() {
         return bson_2.calculateObjectSize;
@@ -4450,10 +4519,32 @@
         const res = bson_1.BSON.onDemand.parseToElements(bytes, offset);
         return Array.isArray(res) ? res : [...res];
       }
-      exports2.getInt32LE = bson_1.BSON.onDemand.NumberUtils.getInt32LE;
-      exports2.getFloat64LE = bson_1.BSON.onDemand.NumberUtils.getFloat64LE;
-      exports2.getBigInt64LE = bson_1.BSON.onDemand.NumberUtils.getBigInt64LE;
-      exports2.toUTF8 = bson_1.BSON.onDemand.ByteUtils.toUTF8;
+      var validateBufferInputs = (buffer, offset, length) => {
+        if (offset < 0 || offset + length > buffer.length) {
+          throw new RangeError(`Attempt to access memory outside buffer bounds: buffer length: ${buffer.length}, offset: ${offset}, length: ${length}`);
+        }
+      };
+      var readInt32LE = (buffer, offset) => {
+        validateBufferInputs(buffer, offset, 4);
+        return bson_1.NumberUtils.getInt32LE(buffer, offset);
+      };
+      exports2.readInt32LE = readInt32LE;
+      var readUint8 = (buffer, offset) => {
+        validateBufferInputs(buffer, offset, 1);
+        return buffer[offset];
+      };
+      exports2.readUint8 = readUint8;
+      var setUint32LE = (destination, offset, value) => {
+        destination[offset] = value;
+        value >>>= 8;
+        destination[offset + 1] = value;
+        value >>>= 8;
+        destination[offset + 2] = value;
+        value >>>= 8;
+        destination[offset + 3] = value;
+        return 4;
+      };
+      exports2.setUint32LE = setUint32LE;
       function pluckBSONSerializeOptions(options) {
         const { fieldsAsRaw, useBigInt64, promoteValues, promoteBuffers, promoteLongs, serializeFunctions, ignoreUndefined, bsonRegExp, raw, enableUtf8Validation } = options;
         return {
@@ -4501,11 +4592,11 @@
       Object.defineProperty(exports2, "__esModule", { value: true });
       exports2.OP_MSG = exports2.OP_COMPRESSED = exports2.OP_DELETE = exports2.OP_QUERY = exports2.OP_INSERT = exports2.OP_UPDATE = exports2.OP_REPLY = exports2.MIN_SUPPORTED_RAW_DATA_SERVER_VERSION = exports2.MIN_SUPPORTED_RAW_DATA_WIRE_VERSION = exports2.MIN_SUPPORTED_QE_SERVER_VERSION = exports2.MIN_SUPPORTED_QE_WIRE_VERSION = exports2.MAX_SUPPORTED_WIRE_VERSION = exports2.MIN_SUPPORTED_WIRE_VERSION = exports2.MIN_SUPPORTED_SNAPSHOT_READS_SERVER_VERSION = exports2.MIN_SUPPORTED_SNAPSHOT_READS_WIRE_VERSION = exports2.MAX_SUPPORTED_SERVER_VERSION = exports2.MIN_SUPPORTED_SERVER_VERSION = void 0;
       exports2.MIN_SUPPORTED_SERVER_VERSION = "4.2";
-      exports2.MAX_SUPPORTED_SERVER_VERSION = "8.2";
+      exports2.MAX_SUPPORTED_SERVER_VERSION = "9.0";
       exports2.MIN_SUPPORTED_SNAPSHOT_READS_WIRE_VERSION = 13;
       exports2.MIN_SUPPORTED_SNAPSHOT_READS_SERVER_VERSION = "5.0";
       exports2.MIN_SUPPORTED_WIRE_VERSION = 8;
-      exports2.MAX_SUPPORTED_WIRE_VERSION = 27;
+      exports2.MAX_SUPPORTED_WIRE_VERSION = 29;
       exports2.MIN_SUPPORTED_QE_WIRE_VERSION = 21;
       exports2.MIN_SUPPORTED_QE_SERVER_VERSION = "7.0";
       exports2.MIN_SUPPORTED_RAW_DATA_WIRE_VERSION = 27;
@@ -6277,24 +6368,24 @@
             case bson_1.BSONType.undefined:
               return null;
             case bson_1.BSONType.double:
-              return (0, bson_1.getFloat64LE)(this.bson, offset);
+              return bson_1.NumberUtils.getFloat64LE(this.bson, offset);
             case bson_1.BSONType.int:
-              return (0, bson_1.getInt32LE)(this.bson, offset);
+              return bson_1.NumberUtils.getInt32LE(this.bson, offset);
             case bson_1.BSONType.long:
-              return (0, bson_1.getBigInt64LE)(this.bson, offset);
+              return bson_1.NumberUtils.getBigInt64LE(this.bson, offset);
             case bson_1.BSONType.bool:
               return Boolean(this.bson[offset]);
             case bson_1.BSONType.objectId:
               return new bson_1.ObjectId(this.bson.subarray(offset, offset + 12));
             case bson_1.BSONType.timestamp:
-              return new bson_1.Timestamp((0, bson_1.getBigInt64LE)(this.bson, offset));
+              return new bson_1.Timestamp(bson_1.NumberUtils.getBigInt64LE(this.bson, offset));
             case bson_1.BSONType.string:
-              return (0, bson_1.toUTF8)(this.bson, offset + 4, offset + length - 1, false);
+              return bson_1.ByteUtils.toUTF8(this.bson, offset + 4, offset + length - 1, false);
             case bson_1.BSONType.binData: {
-              const totalBinarySize = (0, bson_1.getInt32LE)(this.bson, offset);
+              const totalBinarySize = bson_1.NumberUtils.getInt32LE(this.bson, offset);
               const subType = this.bson[offset + 4];
               if (subType === 2) {
-                const subType2BinarySize = (0, bson_1.getInt32LE)(this.bson, offset + 1 + 4);
+                const subType2BinarySize = bson_1.NumberUtils.getInt32LE(this.bson, offset + 1 + 4);
                 if (subType2BinarySize < 0)
                   throw new bson_1.BSONError("Negative binary type element size found for subtype 0x02");
                 if (subType2BinarySize > totalBinarySize - 4)
@@ -6306,7 +6397,7 @@
               return new bson_1.Binary(this.bson.subarray(offset + 1 + 4, offset + 1 + 4 + totalBinarySize), subType);
             }
             case bson_1.BSONType.date:
-              return new Date(Number((0, bson_1.getBigInt64LE)(this.bson, offset)));
+              return new Date(Number(bson_1.NumberUtils.getBigInt64LE(this.bson, offset)));
             case bson_1.BSONType.object:
               return new _OnDemandDocument(this.bson, offset);
             case bson_1.BSONType.array:
@@ -6384,7 +6475,7 @@
         }
         /** Returns this document's bytes only */
         toBytes() {
-          const size = (0, bson_1.getInt32LE)(this.bson, this.offset);
+          const size = bson_1.NumberUtils.getInt32LE(this.bson, this.offset);
           return this.bson.subarray(this.offset, this.offset + size);
         }
       };
@@ -6763,7 +6854,7 @@
     "node_modules/mongodb/lib/utils.js"(exports2) {
       "use strict";
       Object.defineProperty(exports2, "__esModule", { value: true });
-      exports2.kDispose = exports2.randomBytes = exports2.COSMOS_DB_MSG = exports2.DOCUMENT_DB_MSG = exports2.COSMOS_DB_CHECK = exports2.DOCUMENT_DB_CHECK = exports2.MONGODB_WARNING_CODE = exports2.DEFAULT_PK_FACTORY = exports2.HostAddress = exports2.BufferPool = exports2.List = exports2.MongoDBCollectionNamespace = exports2.MongoDBNamespace = exports2.ByteUtils = void 0;
+      exports2.kDispose = exports2.randomBytes = exports2.COSMOS_DB_MSG = exports2.DOCUMENT_DB_MSG = exports2.COSMOS_DB_CHECK = exports2.DOCUMENT_DB_CHECK = exports2.MONGODB_WARNING_CODE = exports2.DEFAULT_PK_FACTORY = exports2.HostAddress = exports2.BufferPool = exports2.List = exports2.MongoDBCollectionNamespace = exports2.MongoDBNamespace = void 0;
       exports2.isUint8Array = isUint8Array;
       exports2.hostMatchesWildcards = hostMatchesWildcards;
       exports2.normalizeHintField = normalizeHintField;
@@ -6796,6 +6887,7 @@
       exports2.supportsRetryableWrites = supportsRetryableWrites;
       exports2.shuffle = shuffle;
       exports2.commandSupportsReadConcern = commandSupportsReadConcern;
+      exports2.commandSupportsAfterClusterTime = commandSupportsAfterClusterTime;
       exports2.compareObjectId = compareObjectId;
       exports2.parseInteger = parseInteger;
       exports2.parseUnsignedInteger = parseUnsignedInteger;
@@ -6812,7 +6904,6 @@
       exports2.decorateDecryptionResult = decorateDecryptionResult;
       exports2.addAbortListener = addAbortListener;
       exports2.abortable = abortable;
-      var crypto6 = __require("crypto");
       var fs_1 = __require("fs");
       var http = __require("http");
       var process2 = __require("process");
@@ -6825,27 +6916,25 @@
       var read_preference_1 = require_read_preference();
       var common_1 = require_common();
       var write_concern_1 = require_write_concern();
-      exports2.ByteUtils = {
-        toLocalBufferType(buffer) {
-          return Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer.buffer, buffer.byteOffset, buffer.byteLength);
-        },
-        equals(seqA, seqB) {
-          return exports2.ByteUtils.toLocalBufferType(seqA).equals(seqB);
-        },
-        compare(seqA, seqB) {
-          return exports2.ByteUtils.toLocalBufferType(seqA).compare(seqB);
-        },
-        toBase64(uint8array) {
-          return exports2.ByteUtils.toLocalBufferType(uint8array).toString("base64");
-        }
-      };
       function isUint8Array(value) {
         return value != null && typeof value === "object" && Symbol.toStringTag in value && value[Symbol.toStringTag] === "Uint8Array";
       }
       function hostMatchesWildcards(host, wildcards) {
         for (const wildcard of wildcards) {
-          if (host === wildcard || wildcard.startsWith("*.") && host?.endsWith(wildcard.substring(2, wildcard.length)) || wildcard.startsWith("*/") && host?.endsWith(wildcard.substring(2, wildcard.length))) {
+          if (host === wildcard) {
             return true;
+          }
+          if (wildcard.startsWith("*.")) {
+            const suffix = wildcard.substring(2);
+            if (host === suffix || host.endsWith(`.${suffix}`)) {
+              return true;
+            }
+          }
+          if (wildcard.startsWith("*/")) {
+            const suffix = wildcard.substring(2);
+            if (host === suffix || host.endsWith(`/${suffix}`)) {
+              return true;
+            }
           }
         }
         return false;
@@ -6960,7 +7049,7 @@
         }
       }
       function uuidV4() {
-        const result = crypto6.randomBytes(16);
+        const result = crypto.getRandomValues(new Uint8Array(16));
         result[6] = result[6] & 15 | 64;
         result[8] = result[8] & 63 | 128;
         return result;
@@ -7263,10 +7352,10 @@
           }
           const firstBuffer = this.buffers.first();
           if (firstBuffer != null && firstBuffer.byteLength >= 4) {
-            return firstBuffer.readInt32LE(0);
+            return bson_1.NumberUtils.getInt32LE(firstBuffer, 0);
           }
           const top4Bytes = this.read(4);
-          const value = top4Bytes.readInt32LE(0);
+          const value = bson_1.NumberUtils.getInt32LE(top4Bytes, 0);
           this.totalByteLength += 4;
           this.buffers.unshift(top4Bytes);
           return value;
@@ -7277,9 +7366,9 @@
             throw new error_1.MongoInvalidArgumentError('Argument "size" must be a non-negative number');
           }
           if (size > this.totalByteLength) {
-            return Buffer.alloc(0);
+            return bson_1.ByteUtils.allocate(0);
           }
-          const result = Buffer.allocUnsafe(size);
+          const result = bson_1.ByteUtils.allocateUnsafe(size);
           for (let bytesRead = 0; bytesRead < size; ) {
             const buffer = this.buffers.shift();
             if (buffer == null) {
@@ -7432,6 +7521,15 @@
         }
         return false;
       }
+      function commandSupportsAfterClusterTime(command) {
+        if (command.aggregate || command.count || command.distinct || command.find || command.geoNear) {
+          return true;
+        }
+        if (command.bulkWrite || command.create || command.createIndexes || command.delete || command.drop || command.dropDatabase || command.dropIndexes || command.findAndModify || command.insert || command.update) {
+          return true;
+        }
+        return false;
+      }
       function compareObjectId(oid1, oid2) {
         if (oid1 == null && oid2 == null) {
           return 0;
@@ -7442,7 +7540,7 @@
         if (oid2 == null) {
           return 1;
         }
-        return exports2.ByteUtils.compare(oid1.id, oid2.id);
+        return bson_1.ByteUtils.compare(oid1.id, oid2.id);
       }
       function parseInteger(value) {
         if (typeof value === "number")
@@ -7511,13 +7609,7 @@
         return;
       }
       var randomBytes2 = (size) => {
-        return new Promise((resolve, reject) => {
-          crypto6.randomBytes(size, (error, buf) => {
-            if (error)
-              return reject(error);
-            resolve(buf);
-          });
-        });
+        return Promise.resolve(crypto.getRandomValues(new Uint8Array(size)));
       };
       exports2.randomBytes = randomBytes2;
       async function once(ee, name, options) {
@@ -7567,10 +7659,10 @@
       }
       function decorateDecryptionResult(decrypted, original, isTopLevelDecorateCall = true) {
         if (isTopLevelDecorateCall) {
-          if (Buffer.isBuffer(original)) {
+          if (bson_1.ByteUtils.isUint8Array(original)) {
             original = (0, bson_1.deserialize)(original);
           }
-          if (Buffer.isBuffer(decrypted)) {
+          if (bson_1.ByteUtils.isUint8Array(decrypted)) {
             throw new error_1.MongoRuntimeError("Expected result of decryption to be deserialized BSON object");
           }
         }
@@ -7964,6 +8056,7 @@
           this._session = options.session != null ? options.session : void 0;
           this.options = options;
           this.bypassPinningCheck = !!options.bypassPinningCheck;
+          this.attemptsMade = 0;
         }
         hasAspect(aspect) {
           const ctor = this.constructor;
@@ -8198,6 +8291,52 @@
     }
   });
 
+  // node_modules/mongodb/lib/operations/run_command.js
+  var require_run_command = __commonJS({
+    "node_modules/mongodb/lib/operations/run_command.js"(exports2) {
+      "use strict";
+      Object.defineProperty(exports2, "__esModule", { value: true });
+      exports2.RunCursorCommandOperation = exports2.RunCommandOperation = void 0;
+      var responses_1 = require_responses();
+      var operation_1 = require_operation();
+      var RunCommandOperation = class extends operation_1.AbstractOperation {
+        constructor(namespace, command, options) {
+          super(options);
+          this.SERVER_COMMAND_RESPONSE_TYPE = responses_1.MongoDBResponse;
+          this.command = command;
+          this.options = options;
+          this.ns = namespace.withCollection("$cmd");
+        }
+        get commandName() {
+          return "runCommand";
+        }
+        buildCommand(_connection, _session) {
+          return this.command;
+        }
+        buildOptions(timeoutContext) {
+          return {
+            ...this.options,
+            session: this.session,
+            timeoutContext,
+            signal: this.options.signal,
+            readPreference: this.options.readPreference
+          };
+        }
+      };
+      exports2.RunCommandOperation = RunCommandOperation;
+      var RunCursorCommandOperation = class extends RunCommandOperation {
+        constructor() {
+          super(...arguments);
+          this.SERVER_COMMAND_RESPONSE_TYPE = responses_1.CursorResponse;
+        }
+        handleOk(response) {
+          return response;
+        }
+      };
+      exports2.RunCursorCommandOperation = RunCursorCommandOperation;
+    }
+  });
+
   // node_modules/mongodb/lib/operations/execute_operation.js
   var require_execute_operation = __commonJS({
     "node_modules/mongodb/lib/operations/execute_operation.js"(exports2) {
@@ -8205,14 +8344,17 @@
       Object.defineProperty(exports2, "__esModule", { value: true });
       exports2.executeOperation = executeOperation;
       exports2.autoConnect = autoConnect;
+      var promises_1 = __require("timers/promises");
       var constants_1 = require_constants();
       var error_1 = require_error();
       var read_preference_1 = require_read_preference();
+      var common_1 = require_common();
       var server_selection_1 = require_server_selection();
       var timeout_1 = require_timeout();
       var utils_1 = require_utils();
       var aggregate_1 = require_aggregate();
       var operation_1 = require_operation();
+      var run_command_1 = require_run_command();
       var MMAPv1_RETRY_WRITES_ERROR_CODE = error_1.MONGODB_ERROR_CODES.IllegalOperation;
       var MMAPv1_RETRY_WRITES_ERROR_MESSAGE = "This MongoDB deployment does not support retryable writes. Please add retryWrites=false to your connection string.";
       async function executeOperation(client, operation2, timeoutContext) {
@@ -8249,7 +8391,7 @@
           timeoutMS: operation2.options.timeoutMS
         }));
         try {
-          return await tryOperation(operation2, {
+          return await executeOperationWithRetries(operation2, {
             topology,
             timeoutContext,
             session,
@@ -8279,7 +8421,9 @@
         }
         return client.topology;
       }
-      async function tryOperation(operation2, { topology, timeoutContext, session, readPreference }) {
+      var BASE_BACKOFF_MS = 100;
+      var MAX_BACKOFF_MS = 1e4;
+      async function executeOperationWithRetries(operation2, { topology, timeoutContext, session, readPreference }) {
         let selector;
         if (operation2.hasAspect(operation_1.Aspect.MUST_SELECT_SAME_SERVER)) {
           selector = (0, server_selection_1.sameServerSelector)(operation2.server?.description);
@@ -8305,28 +8449,62 @@
           operation2.options.willRetryWrite = true;
           session.incrementTransactionNumber();
         }
-        const maxTries = willRetry ? timeoutContext.csotEnabled() ? Infinity : 2 : 1;
-        let previousOperationError;
         const deprioritizedServers = new server_selection_1.DeprioritizedServers();
-        for (let tries = 0; tries < maxTries; tries++) {
-          if (previousOperationError) {
-            if (hasWriteAspect && previousOperationError.code === MMAPv1_RETRY_WRITES_ERROR_CODE) {
+        let maxAttempts = typeof operation2.maxAttempts === "number" ? operation2.maxAttempts : willRetry ? timeoutContext.csotEnabled() ? Infinity : 2 : 1;
+        let error = null;
+        for (let attempt = 0; attempt < maxAttempts; attempt++) {
+          operation2.attemptsMade = attempt + 1;
+          operation2.server = server;
+          try {
+            try {
+              const result = await server.command(operation2, timeoutContext);
+              return operation2.handleOk(result);
+            } catch (error2) {
+              return operation2.handleError(error2);
+            }
+          } catch (operationError) {
+            if (!(operationError instanceof error_1.MongoError))
+              throw operationError;
+            if (error == null) {
+              error = operationError;
+            } else {
+              if (!operationError.hasErrorLabel(error_1.MongoErrorLabel.NoWritesPerformed)) {
+                error = operationError;
+              }
+            }
+            timeoutContext.clear();
+            if (hasWriteAspect && operationError.code === MMAPv1_RETRY_WRITES_ERROR_CODE) {
               throw new error_1.MongoServerError({
                 message: MMAPv1_RETRY_WRITES_ERROR_MESSAGE,
                 errmsg: MMAPv1_RETRY_WRITES_ERROR_MESSAGE,
-                originalError: previousOperationError
+                originalError: operationError
               });
             }
-            if (operation2.hasAspect(operation_1.Aspect.COMMAND_BATCHING) && !operation2.canRetryWrite) {
-              throw previousOperationError;
+            if (!canRetry(operation2, operationError)) {
+              throw error;
             }
-            if (hasWriteAspect && !(0, error_1.isRetryableWriteError)(previousOperationError))
-              throw previousOperationError;
-            if (hasReadAspect && !(0, error_1.isRetryableReadError)(previousOperationError)) {
-              throw previousOperationError;
+            if (operationError.hasErrorLabel(error_1.MongoErrorLabel.SystemOverloadedError)) {
+              const maxOverloadAttempts = topology.s.options.maxAdaptiveRetries + 1;
+              maxAttempts = Math.min(maxOverloadAttempts, operation2.maxAttempts ?? maxOverloadAttempts);
             }
-            if (previousOperationError instanceof error_1.MongoNetworkError && operation2.hasAspect(operation_1.Aspect.CURSOR_CREATING) && session != null && session.isPinned && !session.inTransaction()) {
+            if (attempt + 1 >= maxAttempts) {
+              throw error;
+            }
+            if (operationError instanceof error_1.MongoNetworkError && operation2.hasAspect(operation_1.Aspect.CURSOR_CREATING) && session != null && session.isPinned && !session.inTransaction()) {
               session.unpin({ force: true, forceClear: true });
+            }
+            if (operationError.hasErrorLabel(error_1.MongoErrorLabel.SystemOverloadedError) && operation2.hasAspect(operation_1.Aspect.CURSOR_CREATING) && session != null && session.isPinned && !session.inTransaction()) {
+              session.unpin({ force: true });
+            }
+            if (operationError.hasErrorLabel(error_1.MongoErrorLabel.SystemOverloadedError)) {
+              const backoffMS = Math.random() * Math.min(MAX_BACKOFF_MS, BASE_BACKOFF_MS * 2 ** attempt);
+              if (timeoutContext.csotEnabled() && backoffMS > timeoutContext.remainingTimeMS) {
+                throw error;
+              }
+              await (0, promises_1.setTimeout)(backoffMS);
+            }
+            if (topology.description.type === common_1.TopologyType.Sharded || operationError.hasErrorLabel(error_1.MongoErrorLabel.SystemOverloadedError) && topology.s.options.enableOverloadRetargeting) {
+              deprioritizedServers.add(server.description);
             }
             server = await topology.selectServer(selector, {
               session,
@@ -8334,33 +8512,35 @@
               deprioritizedServers,
               signal: operation2.options.signal
             });
-            if (hasWriteAspect && !(0, utils_1.supportsRetryableWrites)(server)) {
+            if (hasWriteAspect && !(0, utils_1.supportsRetryableWrites)(server) && !operationError.hasErrorLabel(error_1.MongoErrorLabel.SystemOverloadedError)) {
               throw new error_1.MongoUnexpectedServerResponseError("Selected server does not support retryable writes");
             }
-          }
-          operation2.server = server;
-          try {
-            if (tries > 0 && operation2.hasAspect(operation_1.Aspect.COMMAND_BATCHING)) {
+            if (operation2.hasAspect(operation_1.Aspect.COMMAND_BATCHING)) {
               operation2.resetBatch();
             }
-            try {
-              const result = await server.command(operation2, timeoutContext);
-              return operation2.handleOk(result);
-            } catch (error) {
-              return operation2.handleError(error);
-            }
-          } catch (operationError) {
-            if (!(operationError instanceof error_1.MongoError))
-              throw operationError;
-            if (previousOperationError != null && operationError.hasErrorLabel(error_1.MongoErrorLabel.NoWritesPerformed)) {
-              throw previousOperationError;
-            }
-            deprioritizedServers.add(server.description);
-            previousOperationError = operationError;
-            timeoutContext.clear();
           }
         }
-        throw previousOperationError ?? new error_1.MongoRuntimeError("Tried to propagate retryability error, but no error was found.");
+        throw error ?? new error_1.MongoRuntimeError("Should never happen: operation execution loop terminated but no error was recorded.");
+        function canRetry(operation3, error2) {
+          if (error2.hasErrorLabel(error_1.MongoErrorLabel.SystemOverloadedError) && error2.hasErrorLabel(error_1.MongoErrorLabel.RetryableError)) {
+            if (operation3 instanceof run_command_1.RunCommandOperation) {
+              return topology.s.options.retryReads && topology.s.options.retryWrites;
+            }
+            if (operation3 instanceof aggregate_1.AggregateOperation && operation3.hasWriteStage) {
+              return topology.s.options.retryWrites;
+            }
+            const canRetryAsRead = hasReadAspect && topology.s.options.retryReads;
+            const canRetryAsWrite = hasWriteAspect && topology.s.options.retryWrites;
+            return canRetryAsRead || canRetryAsWrite;
+          }
+          if (operation3 instanceof run_command_1.RunCommandOperation) {
+            return false;
+          }
+          if (operation3.hasAspect(operation_1.Aspect.COMMAND_BATCHING)) {
+            return operation3.canRetryWrite && (0, error_1.isRetryableWriteError)(error2);
+          }
+          return hasWriteAspect && willRetryWrite && (0, error_1.isRetryableWriteError)(error2) || hasReadAspect && willRetryRead && (0, error_1.isRetryableReadError)(error2);
+        }
       }
     }
   });
@@ -8435,52 +8615,6 @@
       };
       exports2.RemoveUserOperation = RemoveUserOperation;
       (0, operation_1.defineAspects)(RemoveUserOperation, [operation_1.Aspect.WRITE_OPERATION]);
-    }
-  });
-
-  // node_modules/mongodb/lib/operations/run_command.js
-  var require_run_command = __commonJS({
-    "node_modules/mongodb/lib/operations/run_command.js"(exports2) {
-      "use strict";
-      Object.defineProperty(exports2, "__esModule", { value: true });
-      exports2.RunCursorCommandOperation = exports2.RunCommandOperation = void 0;
-      var responses_1 = require_responses();
-      var operation_1 = require_operation();
-      var RunCommandOperation = class extends operation_1.AbstractOperation {
-        constructor(namespace, command, options) {
-          super(options);
-          this.SERVER_COMMAND_RESPONSE_TYPE = responses_1.MongoDBResponse;
-          this.command = command;
-          this.options = options;
-          this.ns = namespace.withCollection("$cmd");
-        }
-        get commandName() {
-          return "runCommand";
-        }
-        buildCommand(_connection, _session) {
-          return this.command;
-        }
-        buildOptions(timeoutContext) {
-          return {
-            ...this.options,
-            session: this.session,
-            timeoutContext,
-            signal: this.options.signal,
-            readPreference: this.options.readPreference
-          };
-        }
-      };
-      exports2.RunCommandOperation = RunCommandOperation;
-      var RunCursorCommandOperation = class extends RunCommandOperation {
-        constructor() {
-          super(...arguments);
-          this.SERVER_COMMAND_RESPONSE_TYPE = responses_1.CursorResponse;
-        }
-        handleOk(response) {
-          return response;
-        }
-      };
-      exports2.RunCursorCommandOperation = RunCursorCommandOperation;
     }
   });
 
@@ -11062,7 +11196,6 @@
           }
         }
         /**
-         * @experimental
          * An alias for {@link ClientSession.endSession|ClientSession.endSession()}.
          */
         async [Symbol.asyncDispose]() {
@@ -11111,7 +11244,7 @@
           if (this.id == null || session.id == null) {
             return false;
           }
-          return utils_1.ByteUtils.equals(this.id.id.buffer, session.id.id.buffer);
+          return bson_1.ByteUtils.equals(this.id.id.buffer, session.id.id.buffer);
         }
         /**
          * Increment the transaction number on the internal ServerSession
@@ -11204,6 +11337,7 @@
             readPreference: read_preference_1.ReadPreference.primary,
             bypassPinningCheck: true
           });
+          operation2.maxAttempts = this.clientOptions.maxAdaptiveRetries + 1;
           const timeoutContext = this.timeoutContext ?? (typeof timeoutMS === "number" ? timeout_1.TimeoutContext.create({
             serverSelectionTimeoutMS: this.clientOptions.serverSelectionTimeoutMS,
             socketTimeoutMS: this.clientOptions.socketTimeoutMS,
@@ -11215,15 +11349,21 @@
             return;
           } catch (firstCommitError) {
             this.commitAttempted = true;
+            const remainingAttempts = this.clientOptions.maxAdaptiveRetries + 1 - operation2.attemptsMade;
+            if (remainingAttempts <= 0) {
+              throw firstCommitError;
+            }
             if (firstCommitError instanceof error_1.MongoError && (0, error_1.isRetryableWriteError)(firstCommitError)) {
               write_concern_1.WriteConcern.apply(command, { wtimeoutMS: 1e4, ...wc, w: "majority" });
               this.unpin({ force: true });
               try {
-                await (0, execute_operation_1.executeOperation)(this.client, new run_command_1.RunCommandOperation(new utils_1.MongoDBNamespace("admin"), command, {
+                const op = new run_command_1.RunCommandOperation(new utils_1.MongoDBNamespace("admin"), command, {
                   session: this,
                   readPreference: read_preference_1.ReadPreference.primary,
                   bypassPinningCheck: true
-                }), timeoutContext);
+                });
+                op.maxAttempts = remainingAttempts;
+                await (0, execute_operation_1.executeOperation)(this.client, op, timeoutContext);
                 return;
               } catch (retryCommitError) {
                 if (shouldAddUnknownTransactionCommitResultLabel(retryCommitError)) {
@@ -11358,7 +11498,9 @@
             serverSelectionTimeoutMS: this.clientOptions.serverSelectionTimeoutMS,
             socketTimeoutMS: this.clientOptions.socketTimeoutMS
           }) : null;
-          const startTime = this.timeoutContext?.csotEnabled() ? this.timeoutContext.start : (0, utils_1.processTimeMS)();
+          const csotEnabled = !!this.timeoutContext?.csotEnabled();
+          const remainingTimeMS = this.timeoutContext?.csotEnabled() ? this.timeoutContext.remainingTimeMS : MAX_TIMEOUT;
+          const deadline = (0, utils_1.processTimeMS)() + remainingTimeMS;
           let committed = false;
           let result;
           let lastError = null;
@@ -11370,9 +11512,8 @@
                 const BACKOFF_GROWTH = 1.5;
                 const jitter = Math.random();
                 const backoffMS = jitter * Math.min(BACKOFF_INITIAL_MS * BACKOFF_GROWTH ** (transactionAttempt - 1), BACKOFF_MAX_MS);
-                const willExceedTransactionDeadline = this.timeoutContext?.csotEnabled() && backoffMS > this.timeoutContext.remainingTimeMS || (0, utils_1.processTimeMS)() + backoffMS > startTime + MAX_TIMEOUT;
-                if (willExceedTransactionDeadline) {
-                  throw lastError ?? new error_1.MongoRuntimeError(`Transaction retry did not record an error: should never occur. Please file a bug.`);
+                if ((0, utils_1.processTimeMS)() + backoffMS >= deadline) {
+                  throw makeTimeoutError(lastError ?? new error_1.MongoRuntimeError(`Transaction retry did not record an error: should never occur. Please file a bug.`), csotEnabled);
                 }
                 await (0, promises_1.setTimeout)(backoffMS);
               }
@@ -11391,11 +11532,14 @@
                   await this.abortTransaction();
                   throw fnError;
                 }
+                lastError = fnError;
                 if (this.transaction.state === transactions_1.TxnState.STARTING_TRANSACTION || this.transaction.state === transactions_1.TxnState.TRANSACTION_IN_PROGRESS) {
                   await this.abortTransaction();
                 }
-                if (fnError.hasErrorLabel(error_1.MongoErrorLabel.TransientTransactionError) && (this.timeoutContext?.csotEnabled() || (0, utils_1.processTimeMS)() - startTime < MAX_TIMEOUT)) {
-                  lastError = fnError;
+                if (fnError.hasErrorLabel(error_1.MongoErrorLabel.TransientTransactionError)) {
+                  if ((0, utils_1.processTimeMS)() >= deadline) {
+                    throw makeTimeoutError(lastError, csotEnabled);
+                  }
                   continue retryTransaction;
                 }
                 throw fnError;
@@ -11405,15 +11549,15 @@
                   await this.commitTransaction();
                   committed = true;
                 } catch (commitError) {
-                  const hasTimedOut = !this.timeoutContext?.csotEnabled() && (0, utils_1.processTimeMS)() - startTime >= MAX_TIMEOUT;
-                  if (!hasTimedOut) {
-                    if (!isMaxTimeMSExpiredError(commitError) && commitError.hasErrorLabel(error_1.MongoErrorLabel.UnknownTransactionCommitResult)) {
-                      continue retryCommit;
+                  lastError = commitError;
+                  if (commitError.hasErrorLabel(error_1.MongoErrorLabel.UnknownTransactionCommitResult) && !isMaxTimeMSExpiredError(commitError)) {
+                    if ((0, utils_1.processTimeMS)() >= deadline) {
+                      throw makeTimeoutError(commitError, csotEnabled);
                     }
-                    if (commitError.hasErrorLabel(error_1.MongoErrorLabel.TransientTransactionError)) {
-                      lastError = commitError;
-                      continue retryTransaction;
-                    }
+                    continue retryCommit;
+                  }
+                  if (commitError.hasErrorLabel(error_1.MongoErrorLabel.TransientTransactionError)) {
+                    continue retryTransaction;
                   }
                   throw commitError;
                 }
@@ -11426,6 +11570,23 @@
         }
       };
       exports2.ClientSession = ClientSession;
+      function makeTimeoutError(cause, csotEnabled) {
+        if (cause instanceof error_1.MongoOperationTimeoutError) {
+          return cause;
+        }
+        if (csotEnabled) {
+          const timeoutError = new error_1.MongoOperationTimeoutError("Timed out during withTransaction", {
+            cause
+          });
+          if (cause instanceof error_1.MongoError) {
+            for (const label of cause.errorLabels) {
+              timeoutError.addErrorLabel(label);
+            }
+          }
+          return timeoutError;
+        }
+        return cause;
+      }
       var NON_DETERMINISTIC_WRITE_CONCERN_ERRORS = /* @__PURE__ */ new Set([
         "CannotSatisfyWriteConcern",
         "UnknownReplWriteConcern",
@@ -11484,7 +11645,7 @@
         /** @internal */
         constructor(cloned) {
           if (cloned != null) {
-            const idBytes = Buffer.allocUnsafe(16);
+            const idBytes = bson_1.ByteUtils.allocateUnsafe(16);
             idBytes.set(cloned.id.id.buffer);
             this.id = { id: new bson_1.Binary(idBytes, cloned.id.id.sub_type) };
             this.lastUse = cloned.lastUse;
@@ -11589,7 +11750,7 @@
           if (session.transaction.state !== transactions_1.TxnState.NO_TRANSACTION) {
             session.transaction.transition(transactions_1.TxnState.NO_TRANSACTION);
           }
-          if (session.supports.causalConsistency && session.operationTime && (0, utils_1.commandSupportsReadConcern)(command)) {
+          if (session.supports.causalConsistency && session.operationTime && (0, utils_1.commandSupportsAfterClusterTime)(command)) {
             command.readConcern = command.readConcern || {};
             Object.assign(command.readConcern, { afterClusterTime: session.operationTime });
           } else if (session.snapshotEnabled) {
@@ -11602,7 +11763,6 @@
         }
         command.autocommit = false;
         if (session.transaction.state === transactions_1.TxnState.STARTING_TRANSACTION) {
-          session.transaction.transition(transactions_1.TxnState.TRANSACTION_IN_PROGRESS);
           command.startTransaction = true;
           const readConcern = session.transaction.options.readConcern || session?.clientOptions?.readConcern;
           if (readConcern) {
@@ -11629,6 +11789,17 @@
           const atClusterTime = document2.atClusterTime;
           if (atClusterTime) {
             session.snapshotTime = atClusterTime;
+          }
+        }
+        if (session.transaction.state === transactions_1.TxnState.STARTING_TRANSACTION) {
+          if (document2.ok === 1) {
+            session.transaction.transition(transactions_1.TxnState.TRANSACTION_IN_PROGRESS);
+          } else {
+            const error = new error_1.MongoServerError(document2.toObject());
+            const isRetryableError = error.hasErrorLabel(error_1.MongoErrorLabel.RetryableError);
+            if (!isRetryableError) {
+              session.transaction.transition(transactions_1.TxnState.TRANSACTION_IN_PROGRESS);
+            }
           }
         }
       }
@@ -11796,7 +11967,6 @@
           return !!this.cursorClient.topology?.loadBalanced;
         }
         /**
-         * @experimental
          * An alias for {@link AbstractCursor.close|AbstractCursor.close()}.
          */
         async [Symbol.asyncDispose]() {
@@ -61425,7 +61595,6 @@ Content-Type: ${partContentType}\r
       exports2.performGSSAPICanonicalizeHostName = performGSSAPICanonicalizeHostName;
       exports2.resolveCname = resolveCname;
       var dns = __require("dns");
-      var os = __require("os");
       var deps_1 = require_deps();
       var error_1 = require_error();
       var utils_1 = require_utils();
@@ -61463,9 +61632,7 @@ Content-Type: ${partContentType}\r
         }
       };
       exports2.GSSAPI = GSSAPI;
-      async function makeKerberosClient(authContext) {
-        const { hostAddress } = authContext.options;
-        const { credentials } = authContext;
+      async function makeKerberosClient({ options: { hostAddress, runtime: { os } }, credentials }) {
         if (!hostAddress || typeof hostAddress.host !== "string" || !credentials) {
           throw new error_1.MongoInvalidArgumentError("Connection must have host and port and credentials defined.");
         }
@@ -61527,7 +61694,7 @@ Content-Type: ${partContentType}\r
         if (mode === exports2.GSSAPICanonicalizationValue.on || mode === exports2.GSSAPICanonicalizationValue.forwardAndReverse) {
           const { address } = await dns.promises.lookup(host);
           try {
-            const results = await dns.promises.resolvePtr(address);
+            const results = await dns.promises.resolve(address, "PTR");
             return results.length > 0 ? results[0] : host;
           } catch {
             return await resolveCname(host);
@@ -61538,7 +61705,7 @@ Content-Type: ${partContentType}\r
       }
       async function resolveCname(host) {
         try {
-          const results = await dns.promises.resolveCname(host);
+          const results = await dns.promises.resolve(host, "CNAME");
           return results.length > 0 ? results[0] : host;
         } catch {
           return host;
@@ -61724,7 +61891,7 @@ Content-Type: ${partContentType}\r
     "node_modules/mongodb/package.json"(exports2, module) {
       module.exports = {
         name: "mongodb",
-        version: "7.1.0",
+        version: "7.5.0",
         description: "The official MongoDB driver for Node.js",
         main: "lib/index.js",
         files: [
@@ -61749,16 +61916,16 @@ Content-Type: ${partContentType}\r
           email: "dbx-node@mongodb.com"
         },
         dependencies: {
-          "@mongodb-js/saslprep": "^1.3.0",
-          bson: "^7.1.1",
-          "mongodb-connection-string-url": "^7.0.0"
+          "@mongodb-js/saslprep": "^1.4.11",
+          bson: "^7.2.0",
+          "mongodb-connection-string-url": "^7.0.1"
         },
         peerDependencies: {
           "@aws-sdk/credential-providers": "^3.806.0",
           "@mongodb-js/zstd": "^7.0.0",
           "gcp-metadata": "^7.0.1",
           kerberos: "^7.0.0",
-          "mongodb-client-encryption": ">=7.0.0 <7.1.0",
+          "mongodb-client-encryption": "^7.2.0",
           snappy: "^7.3.2",
           socks: "^2.8.6"
         },
@@ -61789,44 +61956,43 @@ Content-Type: ${partContentType}\r
           "@aws-sdk/credential-providers": "^3.876.0",
           "@iarna/toml": "^2.2.5",
           "@istanbuljs/nyc-config-typescript": "^1.0.2",
-          "@microsoft/api-extractor": "^7.54.0",
-          "@microsoft/tsdoc-config": "^0.17.1",
+          "@microsoft/api-extractor": "^7.58.7",
+          "@microsoft/tsdoc-config": "^0.18.1",
           "@mongodb-js/zstd": "^7.0.0",
-          "@types/chai": "^4.3.17",
           "@types/chai-subset": "^1.3.5",
-          "@types/express": "^5.0.5",
+          "@types/express": "^5.0.6",
           "@types/kerberos": "^1.1.5",
           "@types/mocha": "^10.0.9",
           "@types/node": "^22.15.3",
           "@types/saslprep": "^1.0.3",
           "@types/semver": "^7.7.0",
           "@types/sinon": "^17.0.4",
-          "@types/sinon-chai": "^4.0.0",
           "@types/whatwg-url": "^13.0.0",
-          "@typescript-eslint/eslint-plugin": "^8.46.3",
+          "@typescript-eslint/eslint-plugin": "^8.60.1",
           "@typescript-eslint/parser": "^8.31.1",
           aws4: "^1.13.2",
-          chai: "^4.4.1",
+          chai: "^5.3.3",
           "chai-subset": "^1.6.0",
           chalk: "^4.1.2",
+          esbuild: "^0.28.0",
           eslint: "^9.39.1",
           "eslint-config-prettier": "^10.1.8",
           "eslint-plugin-mocha": "^10.4.1",
-          "eslint-plugin-prettier": "^5.5.4",
+          "eslint-plugin-prettier": "^5.5.6",
           "eslint-plugin-simple-import-sort": "^12.1.1",
-          "eslint-plugin-tsdoc": "^0.4.0",
-          "eslint-plugin-unused-imports": "^4.2.0",
-          express: "^5.1.0",
+          "eslint-plugin-tsdoc": "^0.5.2",
+          "eslint-plugin-unused-imports": "^4.4.1",
+          express: "^5.2.1",
           "gcp-metadata": "^7.0.1",
-          "js-yaml": "^4.1.0",
-          mocha: "^11.7.5",
+          "js-yaml": "^4.2.0",
+          mocha: "^11.7.6",
           "mocha-sinon": "^2.1.2",
-          "mongodb-client-encryption": "^7.0.0",
+          "mongodb-client-encryption": "^7.2.0",
           nyc: "^17.1.0",
           prettier: "^3.6.2",
           semver: "^7.7.2",
           sinon: "^18.0.1",
-          "sinon-chai": "^3.7.0",
+          "sinon-chai": "^4.0.1",
           snappy: "^7.3.2",
           socks: "^2.8.7",
           "source-map-support": "^0.5.21",
@@ -61855,32 +62021,43 @@ Content-Type: ${partContentType}\r
           "check:bench": "npm --prefix test/benchmarks/driver_bench start",
           "check:coverage": "nyc npm run test:all",
           "check:integration-coverage": "nyc npm run check:test",
-          "check:lambda": "nyc mocha --config test/mocha_lambda.js test/integration/node-specific/examples/handler.test.js",
-          "check:lambda:aws": "nyc mocha --config test/mocha_lambda.js test/integration/node-specific/examples/aws_handler.test.js",
+          "check:lambda": "npm run build:bundle && nyc mocha --config test/mocha_lambda.js test/integration/node-specific/examples/handler.test.js",
+          "check:lambda:aws": "npm run build:bundle && nyc mocha --config test/mocha_lambda.js test/integration/node-specific/examples/aws_handler.test.js",
           "check:lint": "npm run build:dts && npm run check:dts && npm run check:eslint && npm run check:tsd",
           "check:eslint": "npm run build:dts && ESLINT_USE_FLAT_CONFIG=false eslint -v && ESLINT_USE_FLAT_CONFIG=false eslint --max-warnings=0 --ext '.js,.ts' src test",
           "check:tsd": "tsd --version && tsd",
-          "check:dependencies": "mocha test/action/dependency.test.ts",
-          "check:dts": "node ./node_modules/typescript/bin/tsc --target es2023 --module commonjs --noEmit mongodb.d.ts && tsd",
-          "check:search-indexes": "nyc mocha --config test/mocha_mongodb.js test/manual/search-index-management.prose.test.ts",
-          "check:test": "mocha --config test/mocha_mongodb.js test/integration",
-          "check:unit": "nyc mocha test/unit",
+          "check:dependencies": "npm run build:bundle && mocha test/action/dependency.test.ts",
+          "check:dts": "npm run build:bundle && node ./node_modules/typescript/bin/tsc --target es2023 --module commonjs --noEmit mongodb.d.ts && tsd",
+          "check:search-indexes": "npm run build:bundle && nyc mocha --config test/mocha_mongodb.js test/manual/search-index-management.prose.test.ts",
+          "check:test": "npm run build:bundle && nyc mocha --config test/mocha_mongodb.js test/integration",
+          "check:test:debug": "npm run mocha:debug -- --config test/mocha_mongodb.js test/integration",
+          "check:test-bundled": "MONGODB_BUNDLED=true npm run check:test",
+          "check:unit": "npm run build:bundle && nyc mocha test/unit",
+          "check:unit:debug": "npm run mocha:debug -- test/unit",
+          "check:unit-bundled": "MONGODB_BUNDLED=true npm run check:unit",
           "check:ts": "node ./node_modules/typescript/bin/tsc -v && node ./node_modules/typescript/bin/tsc --noEmit",
-          "check:atlas": "nyc mocha --config test/manual/mocharc.js test/manual/atlas_connectivity.test.ts",
-          "check:drivers-atlas-testing": "nyc mocha --config test/mocha_mongodb.js test/atlas/drivers_atlas_testing.test.ts",
-          "check:aws": "nyc mocha --config test/mocha_mongodb.js test/integration/auth/mongodb_aws.test.ts test/integration/auth/mongodb_aws.prose.test.ts",
-          "check:oidc-auth": "nyc mocha --config test/mocha_mongodb.js test/integration/auth/auth.spec.test.ts",
-          "check:oidc-test": "nyc mocha --config test/mocha_mongodb.js test/integration/auth/mongodb_oidc.prose.test.ts",
-          "check:kerberos": "nyc mocha --config test/manual/mocharc.js test/manual/kerberos.test.ts",
-          "check:tls": "nyc mocha --config test/manual/mocharc.js test/manual/tls_support.test.ts",
-          "check:ldap": "nyc mocha --config test/manual/mocharc.js test/manual/ldap.test.ts",
-          "check:socks5": "nyc mocha --config test/manual/mocharc.js test/manual/socks5.test.ts",
-          "check:csfle": "nyc mocha --config test/mocha_mongodb.js test/integration/client-side-encryption",
-          "check:snappy": "nyc mocha test/unit/assorted/snappy.test.js",
-          "check:x509": "nyc mocha test/manual/x509_auth.test.ts",
+          "check:atlas": "npm run build:bundle && nyc mocha --config test/manual/mocharc.js test/manual/atlas_connectivity.test.ts",
+          "check:drivers-atlas-testing": "npm run build:bundle && nyc mocha --config test/mocha_mongodb.js test/atlas/drivers_atlas_testing.test.ts",
+          "check:aws": "npm run build:bundle && nyc mocha --config test/mocha_mongodb.js test/integration/auth/mongodb_aws.test.ts test/integration/auth/mongodb_aws.prose.test.ts",
+          "check:oidc-auth": "npm run build:bundle && nyc mocha --config test/mocha_mongodb.js test/integration/auth/auth.spec.test.ts",
+          "check:oidc-test": "npm run build:bundle && nyc mocha --config test/mocha_mongodb.js test/integration/auth/mongodb_oidc.prose.test.ts",
+          "check:kerberos": "npm run build:bundle && nyc mocha --config test/manual/mocharc.js test/manual/kerberos.test.ts",
+          "check:tls": "npm run build:bundle && nyc mocha --config test/manual/mocharc.js test/manual/tls_support.test.ts",
+          "check:ldap": "npm run build:bundle && nyc mocha --config test/manual/mocharc.js test/manual/ldap.test.ts",
+          "check:socks5": "npm run build:bundle && nyc mocha --config test/manual/mocharc.js test/manual/socks5.test.ts",
+          "check:csfle": "npm run build:bundle && nyc mocha --config test/mocha_mongodb.js test/integration/client-side-encryption",
+          "check:snappy": "npm run build:bundle && nyc mocha test/unit/assorted/snappy.test.js",
+          "check:x509": "npm run build:bundle && nyc mocha test/manual/x509_auth.test.ts",
+          "mocha:debug": "npm run build:bundle && node --inspect --enable-source-maps --no-experimental-strip-types ./node_modules/mocha/bin/mocha.js",
+          "build:bundle": "npm run bundle:driver && npm run bundle:types && npm run build:runtime-barrel",
+          "build:runtime-barrel": "node etc/build-runtime-barrel.mjs",
+          "bundle:driver": "node etc/bundle-driver.mjs",
+          "bundle:types": "npx tsc --project ./tsconfig.json --declaration --emitDeclarationOnly --declarationDir test/tools/runner/bundle/types",
           "fix:eslint": "npm run check:eslint -- --fix",
           prepare: "node etc/prepare.js",
           "preview:docs": "ts-node etc/docs/preview.ts",
+          "switch:to-bundled": "MONGODB_BUNDLED=true npm run build:runtime-barrel",
+          "switch:to-unbundled": "MONGODB_BUNDLED=false npm run build:runtime-barrel",
           test: "npm run check:lint && npm run test:all",
           "test:all": "npm run check:unit && npm run check:test",
           "update:docs": "npm run build:docs -- --yes"
@@ -61907,7 +62084,6 @@ Content-Type: ${partContentType}\r
       exports2.isDriverInfoEqual = isDriverInfoEqual;
       exports2.makeClientMetadata = makeClientMetadata;
       exports2.getFAASEnv = getFAASEnv;
-      var os = __require("os");
       var process2 = __require("process");
       var bson_1 = require_bson2();
       var error_1 = require_error();
@@ -61947,10 +62123,10 @@ Content-Type: ${partContentType}\r
         }
       };
       exports2.LimitedSizeDocument = LimitedSizeDocument;
-      async function makeClientMetadata(driverInfoList, { appName = "" }) {
+      async function makeClientMetadata(driverInfoList, { appName = "", runtime: { os } }) {
         const metadataDocument = new LimitedSizeDocument(512);
         if (appName.length > 0) {
-          const name = Buffer.byteLength(appName, "utf8") <= 128 ? appName : Buffer.from(appName, "utf8").subarray(0, 128).toString("utf8");
+          const name = bson_1.ByteUtils.utf8ByteLength(appName) <= 128 ? appName : bson_1.ByteUtils.toUTF8(bson_1.ByteUtils.fromUTF8(appName), 0, 128, false);
           metadataDocument.ifItFitsItSits("application", { name });
         }
         const driverInfo = {
@@ -66050,7 +66226,7 @@ Content-Type: ${partContentType}\r
       "use strict";
       Object.defineProperty(exports2, "__esModule", { value: true });
       exports2.OpCompressedRequest = exports2.OpMsgResponse = exports2.OpMsgRequest = exports2.DocumentSequence = exports2.OpReply = exports2.OpQueryRequest = void 0;
-      var BSON = require_bson2();
+      var bson_1 = require_bson2();
       var error_1 = require_error();
       var compression_1 = require_compression();
       var constants_1 = require_constants();
@@ -66066,7 +66242,7 @@ Content-Type: ${partContentType}\r
       var QUERY_FAILURE = 2;
       var SHARD_CONFIG_STALE = 4;
       var AWAIT_CAPABLE = 8;
-      var encodeUTF8Into = BSON.BSON.onDemand.ByteUtils.encodeUTF8Into;
+      var encodeUTF8Into = bson_1.ByteUtils.encodeUTF8Into;
       var OpQueryRequest = class _OpQueryRequest {
         constructor(databaseName, query, options) {
           this.moreToCome = false;
@@ -66140,23 +66316,23 @@ Content-Type: ${partContentType}\r
           }
           if (this.batchSize !== this.numberToReturn)
             this.numberToReturn = this.batchSize;
-          const header = Buffer.alloc(
+          const header = bson_1.ByteUtils.allocate(
             4 * 4 + // Header
             4 + // Flags
-            Buffer.byteLength(this.ns) + 1 + // namespace
+            bson_1.ByteUtils.utf8ByteLength(this.ns) + 1 + // namespace
             4 + // numberToSkip
             4
             // numberToReturn
           );
           buffers.push(header);
-          const query = BSON.serialize(this.query, {
+          const query = bson_1.BSON.serialize(this.query, {
             checkKeys: this.checkKeys,
             serializeFunctions: this.serializeFunctions,
             ignoreUndefined: this.ignoreUndefined
           });
           buffers.push(query);
           if (this.returnFieldSelector && Object.keys(this.returnFieldSelector).length > 0) {
-            projection = BSON.serialize(this.returnFieldSelector, {
+            projection = bson_1.BSON.serialize(this.returnFieldSelector, {
               checkKeys: this.checkKeys,
               serializeFunctions: this.serializeFunctions,
               ignoreUndefined: this.ignoreUndefined
@@ -66189,7 +66365,7 @@ Content-Type: ${partContentType}\r
           header[index + 1] = flags >> 8 & 255;
           header[index] = flags & 255;
           index = index + 4;
-          index = index + header.write(this.ns, index, "utf8") + 1;
+          index = index + encodeUTF8Into(header, this.ns, index) + 1;
           header[index - 1] = 0;
           header[index + 3] = this.numberToSkip >> 24 & 255;
           header[index + 2] = this.numberToSkip >> 16 & 255;
@@ -66238,10 +66414,10 @@ Content-Type: ${partContentType}\r
           if (this.parsed)
             return this.sections[0];
           this.index = 20;
-          this.responseFlags = this.data.readInt32LE(0);
-          this.cursorId = new BSON.Long(this.data.readInt32LE(4), this.data.readInt32LE(8));
-          this.startingFrom = this.data.readInt32LE(12);
-          this.numberReturned = this.data.readInt32LE(16);
+          this.responseFlags = (0, bson_1.readInt32LE)(this.data, 0);
+          this.cursorId = new bson_1.BSON.Long((0, bson_1.readInt32LE)(this.data, 4), (0, bson_1.readInt32LE)(this.data, 8));
+          this.startingFrom = (0, bson_1.readInt32LE)(this.data, 12);
+          this.numberReturned = (0, bson_1.readInt32LE)(this.data, 16);
           if (this.numberReturned < 0 || this.numberReturned > 2 ** 32 - 1) {
             throw new RangeError(`OP_REPLY numberReturned is an invalid array length ${this.numberReturned}`);
           }
@@ -66273,14 +66449,14 @@ Content-Type: ${partContentType}\r
           this.documents = [];
           this.chunks = [];
           this.serializedDocumentsLength = 0;
-          const buffer = Buffer.allocUnsafe(1 + 4 + this.field.length + 1);
+          const buffer = bson_1.ByteUtils.allocateUnsafe(1 + 4 + this.field.length + 1);
           buffer[0] = 1;
           encodeUTF8Into(buffer, `${this.field}\0`, 5);
           this.chunks.push(buffer);
           this.header = buffer;
           if (documents) {
             for (const doc of documents) {
-              this.push(doc, BSON.serialize(doc));
+              this.push(doc, bson_1.BSON.serialize(doc));
             }
           }
         }
@@ -66295,7 +66471,9 @@ Content-Type: ${partContentType}\r
           this.serializedDocumentsLength += buffer.length;
           this.documents.push(document2);
           this.chunks.push(buffer);
-          this.header?.writeInt32LE(4 + this.field.length + 1 + this.serializedDocumentsLength, 1);
+          if (this.header) {
+            bson_1.NumberUtils.setInt32LE(this.header, 1, 4 + this.field.length + 1 + this.serializedDocumentsLength);
+          }
           return this.serializedDocumentsLength + this.header.length;
         }
         /**
@@ -66303,7 +66481,7 @@ Content-Type: ${partContentType}\r
          * @returns The section bytes.
          */
         toBin() {
-          return Buffer.concat(this.chunks);
+          return bson_1.ByteUtils.concat(this.chunks);
         }
       };
       exports2.DocumentSequence = DocumentSequence;
@@ -66336,7 +66514,7 @@ Content-Type: ${partContentType}\r
           if (this.exhaustAllowed) {
             flags |= OPTS_EXHAUST_ALLOWED;
           }
-          const header = Buffer.alloc(
+          const header = bson_1.ByteUtils.allocate(
             4 * 4 + // Header
             4
             // Flags
@@ -66345,11 +66523,11 @@ Content-Type: ${partContentType}\r
           let totalLength = header.length;
           const command = this.command;
           totalLength += this.makeSections(buffers, command);
-          header.writeInt32LE(totalLength, 0);
-          header.writeInt32LE(this.requestId, 4);
-          header.writeInt32LE(0, 8);
-          header.writeInt32LE(constants_1.OP_MSG, 12);
-          header.writeUInt32LE(flags, 16);
+          bson_1.NumberUtils.setInt32LE(header, 0, totalLength);
+          bson_1.NumberUtils.setInt32LE(header, 4, this.requestId);
+          bson_1.NumberUtils.setInt32LE(header, 8, 0);
+          bson_1.NumberUtils.setInt32LE(header, 12, constants_1.OP_MSG);
+          (0, bson_1.setUint32LE)(header, 16, flags);
           return buffers;
         }
         /**
@@ -66357,7 +66535,7 @@ Content-Type: ${partContentType}\r
          */
         makeSections(buffers, document2) {
           const sequencesBuffer = this.extractDocumentSequences(document2);
-          const payloadTypeBuffer = Buffer.allocUnsafe(1);
+          const payloadTypeBuffer = bson_1.ByteUtils.allocateUnsafe(1);
           payloadTypeBuffer[0] = 0;
           const documentBuffer = this.serializeBson(document2);
           buffers.push(payloadTypeBuffer);
@@ -66379,12 +66557,12 @@ Content-Type: ${partContentType}\r
             }
           }
           if (chunks.length > 0) {
-            return Buffer.concat(chunks);
+            return bson_1.ByteUtils.concat(chunks);
           }
-          return Buffer.alloc(0);
+          return bson_1.ByteUtils.allocate(0);
         }
         serializeBson(document2) {
-          return BSON.serialize(document2, {
+          return bson_1.BSON.serialize(document2, {
             checkKeys: this.checkKeys,
             serializeFunctions: this.serializeFunctions,
             ignoreUndefined: this.ignoreUndefined
@@ -66415,7 +66593,7 @@ Content-Type: ${partContentType}\r
           this.responseTo = msgHeader.responseTo;
           this.opCode = msgHeader.opCode;
           this.fromCompressed = msgHeader.fromCompressed;
-          this.responseFlags = msgBody.readInt32LE(0);
+          this.responseFlags = (0, bson_1.readInt32LE)(msgBody, 0);
           this.checksumPresent = (this.responseFlags & OPTS_CHECKSUM_PRESENT) !== 0;
           this.moreToCome = (this.responseFlags & OPTS_MORE_TO_COME) !== 0;
           this.exhaustAllowed = (this.responseFlags & OPTS_EXHAUST_ALLOWED) !== 0;
@@ -66433,9 +66611,9 @@ Content-Type: ${partContentType}\r
             return this.sections[0];
           this.index = 4;
           while (this.index < this.data.length) {
-            const payloadType = this.data.readUInt8(this.index++);
+            const payloadType = this.data[this.index++];
             if (payloadType === 0) {
-              const bsonSize = this.data.readUInt32LE(this.index);
+              const bsonSize = (0, bson_1.readInt32LE)(this.data, this.index);
               const bin = this.data.subarray(this.index, this.index + bsonSize);
               this.sections.push(bin);
               this.index += bsonSize;
@@ -66466,19 +66644,19 @@ Content-Type: ${partContentType}\r
           return !compression_1.uncompressibleCommands.has(commandName);
         }
         async toBin() {
-          const concatenatedOriginalCommandBuffer = Buffer.concat(this.command.toBin());
+          const concatenatedOriginalCommandBuffer = bson_1.ByteUtils.concat(this.command.toBin());
           const messageToBeCompressed = concatenatedOriginalCommandBuffer.slice(MESSAGE_HEADER_SIZE);
-          const originalCommandOpCode = concatenatedOriginalCommandBuffer.readInt32LE(12);
+          const originalCommandOpCode = (0, bson_1.readInt32LE)(concatenatedOriginalCommandBuffer, 12);
           const compressedMessage = await (0, compression_1.compress)(this.options, messageToBeCompressed);
-          const msgHeader = Buffer.alloc(MESSAGE_HEADER_SIZE);
-          msgHeader.writeInt32LE(MESSAGE_HEADER_SIZE + COMPRESSION_DETAILS_SIZE + compressedMessage.length, 0);
-          msgHeader.writeInt32LE(this.command.requestId, 4);
-          msgHeader.writeInt32LE(0, 8);
-          msgHeader.writeInt32LE(constants_1.OP_COMPRESSED, 12);
-          const compressionDetails = Buffer.alloc(COMPRESSION_DETAILS_SIZE);
-          compressionDetails.writeInt32LE(originalCommandOpCode, 0);
-          compressionDetails.writeInt32LE(messageToBeCompressed.length, 4);
-          compressionDetails.writeUInt8(compression_1.Compressor[this.options.agreedCompressor], 8);
+          const msgHeader = bson_1.ByteUtils.allocate(MESSAGE_HEADER_SIZE);
+          bson_1.NumberUtils.setInt32LE(msgHeader, 0, MESSAGE_HEADER_SIZE + COMPRESSION_DETAILS_SIZE + compressedMessage.length);
+          bson_1.NumberUtils.setInt32LE(msgHeader, 4, this.command.requestId);
+          bson_1.NumberUtils.setInt32LE(msgHeader, 8, 0);
+          bson_1.NumberUtils.setInt32LE(msgHeader, 12, constants_1.OP_COMPRESSED);
+          const compressionDetails = bson_1.ByteUtils.allocate(COMPRESSION_DETAILS_SIZE);
+          bson_1.NumberUtils.setInt32LE(compressionDetails, 0, originalCommandOpCode);
+          bson_1.NumberUtils.setInt32LE(compressionDetails, 4, messageToBeCompressed.length);
+          compressionDetails[8] = compression_1.Compressor[this.options.agreedCompressor];
           return [msgHeader, compressionDetails, compressedMessage];
         }
       };
@@ -66497,6 +66675,7 @@ Content-Type: ${partContentType}\r
       exports2.compressCommand = compressCommand;
       exports2.decompressResponse = decompressResponse;
       var zlib = __require("zlib");
+      var bson_1 = require_bson2();
       var constants_1 = require_constants2();
       var deps_1 = require_deps();
       var error_1 = require_error();
@@ -66612,14 +66791,14 @@ Content-Type: ${partContentType}\r
           zlibCompressionLevel: description.zlibCompressionLevel ?? 0
         });
         const data = await finalCommand.toBin();
-        return Buffer.concat(data);
+        return bson_1.ByteUtils.concat(data);
       }
       async function decompressResponse(message) {
         const messageHeader = {
-          length: message.readInt32LE(0),
-          requestId: message.readInt32LE(4),
-          responseTo: message.readInt32LE(8),
-          opCode: message.readInt32LE(12)
+          length: (0, bson_1.readInt32LE)(message, 0),
+          requestId: (0, bson_1.readInt32LE)(message, 4),
+          responseTo: (0, bson_1.readInt32LE)(message, 8),
+          opCode: (0, bson_1.readInt32LE)(message, 12)
         };
         if (messageHeader.opCode !== constants_2.OP_COMPRESSED) {
           const ResponseType2 = messageHeader.opCode === constants_2.OP_MSG ? commands_1.OpMsgResponse : commands_1.OpReply;
@@ -66629,8 +66808,8 @@ Content-Type: ${partContentType}\r
         const header = {
           ...messageHeader,
           fromCompressed: true,
-          opCode: message.readInt32LE(MESSAGE_HEADER_SIZE),
-          length: message.readInt32LE(MESSAGE_HEADER_SIZE + 4)
+          opCode: (0, bson_1.readInt32LE)(message, MESSAGE_HEADER_SIZE),
+          length: (0, bson_1.readInt32LE)(message, MESSAGE_HEADER_SIZE + 4)
         };
         const compressorID = message[MESSAGE_HEADER_SIZE + 8];
         const compressedBuffer = message.slice(MESSAGE_HEADER_SIZE + 9);
@@ -67470,7 +67649,7 @@ Content-Type: ${partContentType}\r
           }
           const mongoCryptOptions = {
             ...options,
-            kmsProviders: !Buffer.isBuffer(this._kmsProviders) ? (0, bson_1.serialize)(this._kmsProviders) : this._kmsProviders,
+            kmsProviders: (0, bson_1.serialize)(this._kmsProviders),
             errorWrapper: errors_1.defaultErrorWrapper
           };
           this._keyVaultNamespace = options.keyVaultNamespace;
@@ -67913,7 +68092,7 @@ Content-Type: ${partContentType}\r
          *
          */
         async _encrypt(value, expressionMode, options) {
-          const { algorithm, keyId, keyAltName, contentionFactor, queryType, rangeOptions, textOptions } = options;
+          const { algorithm, keyId, keyAltName, contentionFactor, queryType, rangeOptions, stringOptions, textOptions } = options;
           const contextOptions = {
             expressionMode,
             algorithm
@@ -67939,8 +68118,9 @@ Content-Type: ${partContentType}\r
           if (typeof rangeOptions === "object") {
             contextOptions.rangeOptions = (0, bson_1.serialize)(rangeOptions);
           }
-          if (typeof textOptions === "object") {
-            contextOptions.textOptions = (0, bson_1.serialize)(textOptions);
+          const resolvedStringOptions = stringOptions ?? textOptions;
+          if (typeof resolvedStringOptions === "object") {
+            contextOptions.textOptions = (0, bson_1.serialize)(resolvedStringOptions);
           }
           const valueBuffer = (0, bson_1.serialize)({ v: value });
           const stateMachine = new state_machine_1.StateMachine({
@@ -68131,12 +68311,24 @@ Content-Type: ${partContentType}\r
             errorWrapper: errors_1.defaultErrorWrapper
           };
           if (options.schemaMap) {
-            mongoCryptOptions.schemaMap = Buffer.isBuffer(options.schemaMap) ? options.schemaMap : (0, bson_1.serialize)(options.schemaMap);
+            if (bson_1.ByteUtils.isUint8Array(options.schemaMap)) {
+              mongoCryptOptions.schemaMap = options.schemaMap;
+            } else {
+              mongoCryptOptions.schemaMap = (0, bson_1.serialize)(options.schemaMap);
+            }
           }
           if (options.encryptedFieldsMap) {
-            mongoCryptOptions.encryptedFieldsMap = Buffer.isBuffer(options.encryptedFieldsMap) ? options.encryptedFieldsMap : (0, bson_1.serialize)(options.encryptedFieldsMap);
+            if (bson_1.ByteUtils.isUint8Array(options.encryptedFieldsMap)) {
+              mongoCryptOptions.encryptedFieldsMap = options.encryptedFieldsMap;
+            } else {
+              mongoCryptOptions.encryptedFieldsMap = (0, bson_1.serialize)(options.encryptedFieldsMap);
+            }
           }
-          mongoCryptOptions.kmsProviders = !Buffer.isBuffer(this._kmsProviders) ? (0, bson_1.serialize)(this._kmsProviders) : this._kmsProviders;
+          if (bson_1.ByteUtils.isUint8Array(this._kmsProviders)) {
+            mongoCryptOptions.kmsProviders = this._kmsProviders;
+          } else {
+            mongoCryptOptions.kmsProviders = (0, bson_1.serialize)(this._kmsProviders);
+          }
           if (options.options?.logger) {
             mongoCryptOptions.logger = options.options.logger;
           }
@@ -68214,7 +68406,7 @@ Content-Type: ${partContentType}\r
           if (this._bypassEncryption) {
             return cmd;
           }
-          const commandBuffer = Buffer.isBuffer(cmd) ? cmd : (0, bson_1.serialize)(cmd, options);
+          const commandBuffer = (0, bson_1.serialize)(cmd, options);
           const context = this._mongocrypt.makeEncryptionContext(utils_1.MongoDBCollectionNamespace.fromString(ns).db, commandBuffer);
           context.id = this._contextCounter++;
           context.ns = ns;
@@ -68375,6 +68567,29 @@ Content-Type: ${partContentType}\r
         }
       };
       exports2.Encrypter = Encrypter;
+    }
+  });
+
+  // node_modules/mongodb/lib/runtime_adapters.js
+  var require_runtime_adapters = __commonJS({
+    "node_modules/mongodb/lib/runtime_adapters.js"(exports2) {
+      "use strict";
+      Object.defineProperty(exports2, "__esModule", { value: true });
+      exports2.ALLOWED_DRIVER_REQUIRE_PROPERTY_NAME = void 0;
+      exports2.resolveRuntimeAdapters = resolveRuntimeAdapters;
+      exports2.ALLOWED_DRIVER_REQUIRE_PROPERTY_NAME = "allowedDriverRequire";
+      function resolveRuntimeAdapters(options) {
+        globalThis[exports2.ALLOWED_DRIVER_REQUIRE_PROPERTY_NAME] = true;
+        try {
+          const runtime = {
+            // eslint-disable-next-line @typescript-eslint/no-require-imports
+            os: options.runtimeAdapters?.os ?? __require("os")
+          };
+          return runtime;
+        } finally {
+          globalThis[exports2.ALLOWED_DRIVER_REQUIRE_PROPERTY_NAME] = false;
+        }
+      }
     }
   });
 
@@ -69273,7 +69488,7 @@ Content-Type: ${partContentType}\r
         if (typeof remoteAddress === "string" && typeof remotePort === "number") {
           return utils_1.HostAddress.fromHostPort(remoteAddress, remotePort).toString();
         }
-        return (0, utils_1.uuidV4)().toString("hex");
+        return bson_1.ByteUtils.toHex((0, utils_1.uuidV4)());
       }
       var _Connection = class _Connection extends mongo_types_1.TypedEventEmitter {
         constructor(stream, options) {
@@ -69505,6 +69720,9 @@ Content-Type: ${partContentType}\r
               this.throwIfAborted();
             }
           } catch (error) {
+            if (options.session != null && !(error instanceof error_1.MongoServerError)) {
+              (0, sessions_1.updateSessionFromResponse)(options.session, responses_1.MongoDBResponse.empty);
+            }
             if (this.shouldEmitAndLogCommand) {
               this.emitAndLogCommand(this.monitorCommands, _Connection.COMMAND_FAILED, message.databaseName, this.established, new command_monitoring_events_1.CommandFailedEvent(this, message, error, started, this.description.serverConnectionId));
             }
@@ -69560,7 +69778,7 @@ Content-Type: ${partContentType}\r
             agreedCompressor: options.agreedCompressor ?? "none",
             zlibCompressionLevel: options.zlibCompressionLevel ?? 0
           });
-          const buffer = Buffer.concat(await finalCommand.toBin());
+          const buffer = bson_1.ByteUtils.concat(await finalCommand.toBin());
           if (options.timeoutContext?.csotEnabled()) {
             if (options.timeoutContext.minRoundTripTime != null && options.timeoutContext.remainingTimeMS < options.timeoutContext.minRoundTripTime) {
               throw new error_1.MongoOperationTimeoutError("Server roundtrip time is greater than the time remaining");
@@ -69726,7 +69944,7 @@ Content-Type: ${partContentType}\r
     "node_modules/mongodb/lib/cmap/connect.js"(exports2) {
       "use strict";
       Object.defineProperty(exports2, "__esModule", { value: true });
-      exports2.LEGAL_TCP_SOCKET_OPTIONS = exports2.LEGAL_TLS_SOCKET_OPTIONS = void 0;
+      exports2.LEGAL_TCP_SOCKET_OPTIONS = exports2.LEGAL_TLS_SOCKET_OPTIONS = exports2.DEFAULT_KEEP_ALIVE_INITIAL_DELAY_MS = void 0;
       exports2.connect = connect;
       exports2.makeConnection = makeConnection;
       exports2.performInitialHandshake = performInitialHandshake;
@@ -69855,6 +70073,7 @@ Content-Type: ${partContentType}\r
         const clientMetadata = await options.metadata;
         const handshakeDoc = {
           [serverApi?.version || options.loadBalanced === true ? "hello" : constants_1.LEGACY_HELLO_COMMAND]: 1,
+          backpressure: true,
           helloOk: true,
           client: clientMetadata,
           compression: compressors
@@ -69880,6 +70099,7 @@ Content-Type: ${partContentType}\r
         }
         return handshakeDoc;
       }
+      exports2.DEFAULT_KEEP_ALIVE_INITIAL_DELAY_MS = 12e4;
       exports2.LEGAL_TLS_SOCKET_OPTIONS = [
         "allowPartialTrustChain",
         "ALPNProtocols",
@@ -69919,7 +70139,7 @@ Content-Type: ${partContentType}\r
             result[name] = options[name];
           }
         }
-        result.keepAliveInitialDelay ?? (result.keepAliveInitialDelay = 12e4);
+        result.keepAliveInitialDelay ?? (result.keepAliveInitialDelay = exports2.DEFAULT_KEEP_ALIVE_INITIAL_DELAY_MS);
         result.keepAlive = true;
         result.noDelay = options.noDelay ?? true;
         if (typeof hostAddress.socketPath === "string") {
@@ -69952,6 +70172,8 @@ Content-Type: ${partContentType}\r
         const useTLS = options.tls ?? false;
         const connectTimeoutMS = options.connectTimeoutMS ?? 3e4;
         const existingSocket = options.existingSocket;
+        const keepAliveInitialDelay = options.keepAliveInitialDelay ?? exports2.DEFAULT_KEEP_ALIVE_INITIAL_DELAY_MS;
+        const noDelay = options.noDelay ?? true;
         let socket;
         if (options.proxyHost != null) {
           return await makeSocks5Connection({
@@ -69971,6 +70193,8 @@ Content-Type: ${partContentType}\r
         } else {
           socket = net.createConnection(parseConnectOptions(options));
         }
+        socket.setKeepAlive(true, keepAliveInitialDelay);
+        socket.setNoDelay(noDelay);
         socket.setTimeout(connectTimeoutMS);
         let cancellationHandler = null;
         const { promise: connectedSocket, resolve, reject } = (0, utils_1.promiseWithResolvers)();
@@ -71732,6 +71956,7 @@ Content-Type: ${partContentType}\r
       var mongo_logger_1 = require_mongo_logger();
       var read_concern_1 = require_read_concern();
       var read_preference_1 = require_read_preference();
+      var runtime_adapters_1 = require_runtime_adapters();
       var monitor_1 = require_monitor();
       var utils_1 = require_utils();
       var write_concern_1 = require_write_concern();
@@ -71739,21 +71964,22 @@ Content-Type: ${partContentType}\r
       var LB_SINGLE_HOST_ERROR = "loadBalanced option only supported with a single host in the URI";
       var LB_REPLICA_SET_ERROR = "loadBalanced option not supported with a replicaSet option";
       var LB_DIRECT_CONNECTION_ERROR = "loadBalanced option not supported when directConnection is provided";
-      function retryDNSTimeoutFor(api) {
+      function retryDNSTimeoutFor(rrtype) {
+        const resolve = rrtype === "SRV" ? (address) => dns.promises.resolve(address, "SRV") : (address) => dns.promises.resolve(address, "TXT");
         return async function dnsReqRetryTimeout(lookupAddress) {
           try {
-            return await dns.promises[api](lookupAddress);
+            return await resolve(lookupAddress);
           } catch (firstDNSError) {
             if (firstDNSError.code === dns.TIMEOUT) {
-              return await dns.promises[api](lookupAddress);
+              return await resolve(lookupAddress);
             } else {
               throw firstDNSError;
             }
           }
         };
       }
-      var resolveSrv = retryDNSTimeoutFor("resolveSrv");
-      var resolveTxt = retryDNSTimeoutFor("resolveTxt");
+      var resolveSrv = retryDNSTimeoutFor("SRV");
+      var resolveTxt = retryDNSTimeoutFor("TXT");
       async function resolveSRVRecord(options) {
         if (typeof options.srvHost !== "string") {
           throw new error_1.MongoAPIError('Option "srvHost" must not be empty');
@@ -72059,6 +72285,7 @@ Content-Type: ${partContentType}\r
           mongodbLogComponentSeverities: mongoOptions.mongodbLogComponentSeverities,
           mongodbLogMaxDocumentLength: mongoOptions.mongodbLogMaxDocumentLength
         });
+        mongoOptions.runtime = (0, runtime_adapters_1.resolveRuntimeAdapters)(options);
         return mongoOptions;
       }
       function validateLoadBalancedOptions(hosts, mongoOptions, isSrv) {
@@ -72117,6 +72344,10 @@ Content-Type: ${partContentType}\r
         }
       }
       exports2.OPTIONS = {
+        enableOverloadRetargeting: {
+          default: false,
+          type: "boolean"
+        },
         appName: {
           type: "string"
         },
@@ -72332,6 +72563,10 @@ Content-Type: ${partContentType}\r
           default: 15,
           type: "uint"
         },
+        maxAdaptiveRetries: {
+          default: 2,
+          type: "uint"
+        },
         maxConnecting: {
           default: 2,
           transform({ name, values: [value] }) {
@@ -72506,6 +72741,9 @@ Content-Type: ${partContentType}\r
         retryWrites: {
           default: true,
           type: "boolean"
+        },
+        runtimeAdapters: {
+          type: "record"
         },
         serializeFunctions: {
           type: "boolean"
@@ -72728,7 +72966,7 @@ Content-Type: ${partContentType}\r
       var getHexSha256 = async (str) => {
         const data = stringToBuffer(str);
         const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-        const hashHex = bson_1.BSON.onDemand.ByteUtils.toHex(new Uint8Array(hashBuffer));
+        const hashHex = bson_1.ByteUtils.toHex(new Uint8Array(hashBuffer));
         return hashHex;
       };
       var getHmacSha256 = async (key, str) => {
@@ -72748,8 +72986,8 @@ Content-Type: ${partContentType}\r
         return value.toString().trim().replace(/\s+/g, " ");
       };
       function stringToBuffer(str) {
-        const data = new Uint8Array(bson_1.BSON.onDemand.ByteUtils.utf8ByteLength(str));
-        bson_1.BSON.onDemand.ByteUtils.encodeUTF8Into(data, str, 0);
+        const data = new Uint8Array(bson_1.ByteUtils.utf8ByteLength(str));
+        bson_1.ByteUtils.encodeUTF8Into(data, str, 0);
         return data;
       }
       async function aws4Sign(options, credentials) {
@@ -72791,7 +73029,7 @@ Content-Type: ${partContentType}\r
         const dateRegionServiceKey = await getHmacSha256(dateRegionKey, options.service);
         const signingKey = await getHmacSha256(dateRegionServiceKey, "aws4_request");
         const signatureBuffer = await getHmacSha256(signingKey, stringToSign);
-        const signature = bson_1.BSON.onDemand.ByteUtils.toHex(signatureBuffer);
+        const signature = bson_1.ByteUtils.toHex(signatureBuffer);
         const authorizationHeader = [
           "AWS4-HMAC-SHA256 Credential=" + credentials.accessKeyId + "/" + credentialScope,
           "SignedHeaders=" + signedHeaders,
@@ -72811,6 +73049,7 @@ Content-Type: ${partContentType}\r
       "use strict";
       Object.defineProperty(exports2, "__esModule", { value: true });
       exports2.MongoDBAWS = void 0;
+      var bson_1 = require_bson2();
       var BSON = require_bson2();
       var error_1 = require_error();
       var utils_1 = require_utils();
@@ -72860,7 +73099,7 @@ Content-Type: ${partContentType}\r
           if (serverNonce.length !== 64) {
             throw new error_1.MongoRuntimeError(`Invalid server nonce length ${serverNonce.length}, expected 64`);
           }
-          if (!utils_1.ByteUtils.equals(serverNonce.subarray(0, nonce.byteLength), nonce)) {
+          if (!bson_1.ByteUtils.equals(serverNonce.subarray(0, nonce.byteLength), nonce)) {
             throw new error_1.MongoRuntimeError("Server nonce does not begin with client nonce");
           }
           if (host.length < 1 || host.length > 255 || host.indexOf("..") !== -1) {
@@ -72875,7 +73114,7 @@ Content-Type: ${partContentType}\r
             headers: {
               "Content-Type": "application/x-www-form-urlencoded",
               "Content-Length": body.length,
-              "X-MongoDB-Server-Nonce": utils_1.ByteUtils.toBase64(serverNonce),
+              "X-MongoDB-Server-Nonce": bson_1.ByteUtils.toBase64(serverNonce),
               "X-MongoDB-GS2-CB-Flag": "n"
             },
             path: "/",
@@ -73159,14 +73398,14 @@ Content-Type: ${partContentType}\r
     "node_modules/mongodb/lib/cmap/auth/mongodb_oidc/azure_machine_workflow.js"(exports2) {
       "use strict";
       Object.defineProperty(exports2, "__esModule", { value: true });
-      exports2.callback = void 0;
+      exports2.azureCallback = void 0;
       var azure_1 = require_azure();
       var error_1 = require_error();
       var utils_1 = require_utils();
       var AZURE_HEADERS = Object.freeze({ Metadata: "true", Accept: "application/json" });
       var ENDPOINT_RESULT_ERROR = "Azure endpoint did not return a value with only access_token and expires_in properties";
       var TOKEN_RESOURCE_MISSING_ERROR = "TOKEN_RESOURCE must be set in the auth mechanism properties when ENVIRONMENT is azure.";
-      var callback = async (params) => {
+      var azureCallback = async (params) => {
         const tokenAudience = params.tokenAudience;
         const username = params.username;
         if (!tokenAudience) {
@@ -73178,7 +73417,7 @@ Content-Type: ${partContentType}\r
         }
         return response;
       };
-      exports2.callback = callback;
+      exports2.azureCallback = azureCallback;
       async function getAzureTokenData(tokenAudience, username) {
         const url = new URL(azure_1.AZURE_BASE_URL);
         (0, azure_1.addAzureParams)(url, tokenAudience, username);
@@ -73207,20 +73446,20 @@ Content-Type: ${partContentType}\r
     "node_modules/mongodb/lib/cmap/auth/mongodb_oidc/gcp_machine_workflow.js"(exports2) {
       "use strict";
       Object.defineProperty(exports2, "__esModule", { value: true });
-      exports2.callback = void 0;
+      exports2.gcpCallback = void 0;
       var error_1 = require_error();
       var utils_1 = require_utils();
       var GCP_BASE_URL = "http://metadata/computeMetadata/v1/instance/service-accounts/default/identity";
       var GCP_HEADERS = Object.freeze({ "Metadata-Flavor": "Google" });
       var TOKEN_RESOURCE_MISSING_ERROR = "TOKEN_RESOURCE must be set in the auth mechanism properties when ENVIRONMENT is gcp.";
-      var callback = async (params) => {
+      var gcpCallback = async (params) => {
         const tokenAudience = params.tokenAudience;
         if (!tokenAudience) {
           throw new error_1.MongoGCPError(TOKEN_RESOURCE_MISSING_ERROR);
         }
         return await getGcpTokenData(tokenAudience);
       };
-      exports2.callback = callback;
+      exports2.gcpCallback = gcpCallback;
       async function getGcpTokenData(tokenAudience) {
         const url = new URL(GCP_BASE_URL);
         url.searchParams.append("audience", tokenAudience);
@@ -73240,13 +73479,13 @@ Content-Type: ${partContentType}\r
     "node_modules/mongodb/lib/cmap/auth/mongodb_oidc/k8s_machine_workflow.js"(exports2) {
       "use strict";
       Object.defineProperty(exports2, "__esModule", { value: true });
-      exports2.callback = void 0;
+      exports2.k8sCallback = void 0;
       var promises_1 = __require("fs/promises");
       var process2 = __require("process");
       var FALLBACK_FILENAME = "/var/run/secrets/kubernetes.io/serviceaccount/token";
       var AZURE_FILENAME = "AZURE_FEDERATED_TOKEN_FILE";
       var AWS_FILENAME = "AWS_WEB_IDENTITY_TOKEN_FILE";
-      var callback = async () => {
+      var k8sCallback = async () => {
         let filename;
         if (process2.env[AZURE_FILENAME]) {
           filename = process2.env[AZURE_FILENAME];
@@ -73258,7 +73497,7 @@ Content-Type: ${partContentType}\r
         const token = await (0, promises_1.readFile)(filename, "utf8");
         return { accessToken: token };
       };
-      exports2.callback = callback;
+      exports2.k8sCallback = k8sCallback;
     }
   });
 
@@ -73323,12 +73562,12 @@ Content-Type: ${partContentType}\r
     "node_modules/mongodb/lib/cmap/auth/mongodb_oidc/token_machine_workflow.js"(exports2) {
       "use strict";
       Object.defineProperty(exports2, "__esModule", { value: true });
-      exports2.callback = void 0;
+      exports2.tokenMachineCallback = void 0;
       var fs = __require("fs");
       var process2 = __require("process");
       var error_1 = require_error();
       var TOKEN_MISSING_ERROR = "OIDC_TOKEN_FILE must be set in the environment.";
-      var callback = async () => {
+      var tokenMachineCallback = async () => {
         const tokenFile = process2.env.OIDC_TOKEN_FILE;
         if (!tokenFile) {
           throw new error_1.MongoAWSError(TOKEN_MISSING_ERROR);
@@ -73336,7 +73575,7 @@ Content-Type: ${partContentType}\r
         const token = await fs.promises.readFile(tokenFile, "utf8");
         return { accessToken: token };
       };
-      exports2.callback = callback;
+      exports2.tokenMachineCallback = tokenMachineCallback;
     }
   });
 
@@ -73357,10 +73596,10 @@ Content-Type: ${partContentType}\r
       var MISSING_CREDENTIALS_ERROR = "AuthContext must provide credentials.";
       exports2.OIDC_VERSION = 1;
       exports2.OIDC_WORKFLOWS = /* @__PURE__ */ new Map();
-      exports2.OIDC_WORKFLOWS.set("test", () => new automated_callback_workflow_1.AutomatedCallbackWorkflow(new token_cache_1.TokenCache(), token_machine_workflow_1.callback));
-      exports2.OIDC_WORKFLOWS.set("azure", () => new automated_callback_workflow_1.AutomatedCallbackWorkflow(new token_cache_1.TokenCache(), azure_machine_workflow_1.callback));
-      exports2.OIDC_WORKFLOWS.set("gcp", () => new automated_callback_workflow_1.AutomatedCallbackWorkflow(new token_cache_1.TokenCache(), gcp_machine_workflow_1.callback));
-      exports2.OIDC_WORKFLOWS.set("k8s", () => new automated_callback_workflow_1.AutomatedCallbackWorkflow(new token_cache_1.TokenCache(), k8s_machine_workflow_1.callback));
+      exports2.OIDC_WORKFLOWS.set("test", () => new automated_callback_workflow_1.AutomatedCallbackWorkflow(new token_cache_1.TokenCache(), token_machine_workflow_1.tokenMachineCallback));
+      exports2.OIDC_WORKFLOWS.set("azure", () => new automated_callback_workflow_1.AutomatedCallbackWorkflow(new token_cache_1.TokenCache(), azure_machine_workflow_1.azureCallback));
+      exports2.OIDC_WORKFLOWS.set("gcp", () => new automated_callback_workflow_1.AutomatedCallbackWorkflow(new token_cache_1.TokenCache(), gcp_machine_workflow_1.gcpCallback));
+      exports2.OIDC_WORKFLOWS.set("k8s", () => new automated_callback_workflow_1.AutomatedCallbackWorkflow(new token_cache_1.TokenCache(), k8s_machine_workflow_1.k8sCallback));
       var MongoDBOIDC = class extends auth_provider_1.AuthProvider {
         /**
          * Instantiate the auth provider.
@@ -73521,7 +73760,7 @@ Content-Type: ${partContentType}\r
             throw new error_1.MongoMissingCredentialsError("AuthContext must provide credentials.");
           }
           const { username, password } = credentials;
-          const payload = new bson_1.Binary(Buffer.from(`\0${username}\0${password}`));
+          const payload = new bson_1.Binary(bson_1.ByteUtils.fromUTF8(`\0${username}\0${password}`));
           const command = {
             saslStart: 1,
             mechanism: "PLAIN",
@@ -73888,7 +74127,6 @@ Content-Type: ${partContentType}\r
       Object.defineProperty(exports2, "__esModule", { value: true });
       exports2.ScramSHA256 = exports2.ScramSHA1 = void 0;
       var saslprep_1 = require_node2();
-      var crypto6 = __require("crypto");
       var bson_1 = require_bson2();
       var error_1 = require_error();
       var utils_1 = require_utils();
@@ -73928,11 +74166,11 @@ Content-Type: ${partContentType}\r
         return username.replace("=", "=3D").replace(",", "=2C");
       }
       function clientFirstMessageBare(username, nonce) {
-        return Buffer.concat([
-          Buffer.from("n=", "utf8"),
-          Buffer.from(username, "utf8"),
-          Buffer.from(",r=", "utf8"),
-          Buffer.from(nonce.toString("base64"), "utf8")
+        return bson_1.ByteUtils.concat([
+          bson_1.ByteUtils.fromUTF8("n="),
+          bson_1.ByteUtils.fromUTF8(username),
+          bson_1.ByteUtils.fromUTF8(",r="),
+          bson_1.ByteUtils.fromUTF8(bson_1.ByteUtils.toBase64(nonce))
         ]);
       }
       function makeFirstMessage(cryptoMethod, credentials, nonce) {
@@ -73941,7 +74179,7 @@ Content-Type: ${partContentType}\r
         return {
           saslStart: 1,
           mechanism,
-          payload: new bson_1.Binary(Buffer.concat([Buffer.from("n,,", "utf8"), clientFirstMessageBare(username, nonce)])),
+          payload: new bson_1.Binary(bson_1.ByteUtils.concat([bson_1.ByteUtils.fromUTF8("n,,"), clientFirstMessageBare(username, nonce)])),
           autoAuthorize: 1,
           options: { skipEmptyExchange: true }
         };
@@ -73974,7 +74212,7 @@ Content-Type: ${partContentType}\r
         const username = cleanUsername(credentials.username);
         const password = credentials.password;
         const processedPassword = cryptoMethod === "sha256" ? (0, saslprep_1.saslprep)(password) : passwordDigest(username, password);
-        const payload = Buffer.isBuffer(response.payload) ? new bson_1.Binary(response.payload) : response.payload;
+        const payload = bson_1.ByteUtils.isUint8Array(response.payload) ? new bson_1.Binary(response.payload) : response.payload;
         const dict = parsePayload(payload);
         const iterations = parseInt(dict.i, 10);
         if (iterations && iterations < 4096) {
@@ -73986,27 +74224,26 @@ Content-Type: ${partContentType}\r
           throw new error_1.MongoRuntimeError(`Server returned an invalid nonce: ${rnonce}`);
         }
         const withoutProof = `c=biws,r=${rnonce}`;
-        const saltedPassword = HI(processedPassword, Buffer.from(salt, "base64"), iterations, cryptoMethod);
-        const clientKey = HMAC(cryptoMethod, saltedPassword, "Client Key");
-        const serverKey = HMAC(cryptoMethod, saltedPassword, "Server Key");
-        const storedKey = H(cryptoMethod, clientKey);
-        const authMessage = [
-          clientFirstMessageBare(username, nonce),
-          payload.toString("utf8"),
-          withoutProof
-        ].join(",");
-        const clientSignature = HMAC(cryptoMethod, storedKey, authMessage);
+        const saltedPassword = await HI(processedPassword, bson_1.ByteUtils.fromBase64(salt), iterations, cryptoMethod);
+        const clientKey = await HMAC(cryptoMethod, saltedPassword, "Client Key");
+        const serverKey = await HMAC(cryptoMethod, saltedPassword, "Server Key");
+        const storedKey = await H(cryptoMethod, clientKey);
+        const firstMessageBytes = clientFirstMessageBare(username, nonce);
+        const firstMessage = bson_1.ByteUtils.toUTF8(firstMessageBytes, 0, firstMessageBytes.length, false);
+        const payloadString = bson_1.ByteUtils.toUTF8(payload.buffer, 0, payload.position, false);
+        const authMessage = [firstMessage, payloadString, withoutProof].join(",");
+        const clientSignature = await HMAC(cryptoMethod, storedKey, authMessage);
         const clientProof = `p=${xor(clientKey, clientSignature)}`;
         const clientFinal = [withoutProof, clientProof].join(",");
-        const serverSignature = HMAC(cryptoMethod, serverKey, authMessage);
+        const serverSignature = await HMAC(cryptoMethod, serverKey, authMessage);
         const saslContinueCmd = {
           saslContinue: 1,
           conversationId: response.conversationId,
-          payload: new bson_1.Binary(Buffer.from(clientFinal))
+          payload: new bson_1.Binary(bson_1.ByteUtils.fromUTF8(clientFinal))
         };
         const r6 = await connection.command((0, utils_1.ns)(`${db}.$cmd`), saslContinueCmd, void 0);
         const parsedResponse = parsePayload(r6.payload);
-        if (!compareDigest(Buffer.from(parsedResponse.v, "base64"), serverSignature)) {
+        if (!compareDigest(bson_1.ByteUtils.fromBase64(parsedResponse.v), serverSignature)) {
           throw new error_1.MongoRuntimeError("Server returned an invalid signature");
         }
         if (r6.done !== false) {
@@ -74015,12 +74252,12 @@ Content-Type: ${partContentType}\r
         const retrySaslContinueCmd = {
           saslContinue: 1,
           conversationId: r6.conversationId,
-          payload: Buffer.alloc(0)
+          payload: bson_1.ByteUtils.allocate(0)
         };
         await connection.command((0, utils_1.ns)(`${db}.$cmd`), retrySaslContinueCmd, void 0);
       }
       function parsePayload(payload) {
-        const payloadStr = payload.toString("utf8");
+        const payloadStr = bson_1.ByteUtils.toUTF8(payload.buffer, 0, payload.position, false);
         const dict = {};
         const parts = payloadStr.split(",");
         for (let i6 = 0; i6 < parts.length; i6++) {
@@ -74039,37 +74276,44 @@ Content-Type: ${partContentType}\r
         if (password.length === 0) {
           throw new error_1.MongoInvalidArgumentError("Password cannot be empty");
         }
-        let md52;
+        let nodeCrypto2;
         try {
-          md52 = crypto6.createHash("md5");
+          nodeCrypto2 = __require("crypto");
+        } catch (e6) {
+          throw new error_1.MongoRuntimeError("Node.js crypto module is required for SCRAM-SHA-1 authentication", {
+            cause: e6
+          });
+        }
+        try {
+          const md52 = nodeCrypto2.createHash("md5");
+          md52.update(`${username}:mongo:${password}`, "utf8");
+          return md52.digest("hex");
         } catch (err) {
-          if (crypto6.getFips()) {
+          if (nodeCrypto2.getFips()) {
             throw new Error("Auth mechanism SCRAM-SHA-1 is not supported in FIPS mode");
           }
           throw err;
         }
-        md52.update(`${username}:mongo:${password}`, "utf8");
-        return md52.digest("hex");
       }
       function xor(a6, b6) {
-        if (!Buffer.isBuffer(a6)) {
-          a6 = Buffer.from(a6);
-        }
-        if (!Buffer.isBuffer(b6)) {
-          b6 = Buffer.from(b6);
-        }
         const length = Math.max(a6.length, b6.length);
         const res = [];
         for (let i6 = 0; i6 < length; i6 += 1) {
           res.push(a6[i6] ^ b6[i6]);
         }
-        return Buffer.from(res).toString("base64");
+        return bson_1.ByteUtils.toBase64(bson_1.ByteUtils.fromNumberArray(res));
       }
-      function H(method, text) {
-        return crypto6.createHash(method).update(text).digest();
+      async function H(method, text) {
+        const buffer = await crypto.subtle.digest(method === "sha256" ? "SHA-256" : "SHA-1", text);
+        return new Uint8Array(buffer);
       }
-      function HMAC(method, key, text) {
-        return crypto6.createHmac(method, key).update(text).digest();
+      async function HMAC(method, key, text) {
+        const keyBuffer = bson_1.ByteUtils.toLocalBufferType(key);
+        const cryptoKey = await crypto.subtle.importKey("raw", keyBuffer, { name: "HMAC", hash: { name: method === "sha256" ? "SHA-256" : "SHA-1" } }, false, ["sign", "verify"]);
+        const textData = typeof text === "string" ? new TextEncoder().encode(text) : text;
+        const textBuffer = bson_1.ByteUtils.toLocalBufferType(textData);
+        const signature = await crypto.subtle.sign("HMAC", cryptoKey, textBuffer);
+        return new Uint8Array(signature);
       }
       var _hiCache = {};
       var _hiCacheCount = 0;
@@ -74081,12 +74325,20 @@ Content-Type: ${partContentType}\r
         sha256: 32,
         sha1: 20
       };
-      function HI(data, salt, iterations, cryptoMethod) {
-        const key = [data, salt.toString("base64"), iterations].join("_");
+      async function HI(data, salt, iterations, cryptoMethod) {
+        const key = [data, bson_1.ByteUtils.toBase64(salt), iterations].join("_");
         if (_hiCache[key] != null) {
           return _hiCache[key];
         }
-        const saltedData = crypto6.pbkdf2Sync(data, salt, iterations, hiLengthMap[cryptoMethod], cryptoMethod);
+        const keyMaterial = await crypto.subtle.importKey("raw", new TextEncoder().encode(data), { name: "PBKDF2" }, false, ["deriveBits"]);
+        const params = {
+          name: "PBKDF2",
+          salt,
+          iterations,
+          hash: { name: cryptoMethod === "sha256" ? "SHA-256" : "SHA-1" }
+        };
+        const derivedBits = await crypto.subtle.deriveBits(params, keyMaterial, hiLengthMap[cryptoMethod] * 8);
+        const saltedData = new Uint8Array(derivedBits);
         if (_hiCacheCount >= 200) {
           _hiCachePurge();
         }
@@ -74097,9 +74349,6 @@ Content-Type: ${partContentType}\r
       function compareDigest(lhs, rhs) {
         if (lhs.length !== rhs.length) {
           return false;
-        }
-        if (typeof crypto6.timingSafeEqual === "function") {
-          return crypto6.timingSafeEqual(lhs, rhs);
         }
         let result = 0;
         for (let i6 = 0; i6 < lhs.length; i6++) {
@@ -75058,7 +75307,7 @@ Content-Type: ${partContentType}\r
           const generation = this.generation;
           let srvRecords;
           try {
-            srvRecords = await dns.promises.resolveSrv(this.srvAddress);
+            srvRecords = await dns.promises.resolve(this.srvAddress, "SRV");
           } catch {
             this.failure();
             return;
@@ -75290,7 +75539,7 @@ Content-Type: ${partContentType}\r
         }
         closeCheckedOutConnections() {
           for (const server of this.s.servers.values()) {
-            return server.closeCheckedOutConnections();
+            server.closeCheckedOutConnections();
           }
         }
         /** Close this topology */
@@ -75355,8 +75604,9 @@ Content-Type: ${partContentType}\r
             if (this.client.mongoLogger?.willLog(mongo_logger_1.MongoLoggableComponent.SERVER_SELECTION, mongo_logger_1.SeverityLevel.DEBUG)) {
               this.client.mongoLogger?.debug(mongo_logger_1.MongoLoggableComponent.SERVER_SELECTION, new server_selection_events_1.ServerSelectionSucceededEvent(selector, this.description, transaction.server.pool.address, options.operationName));
             }
-            if (options.timeoutContext?.clearServerSelectionTimeout)
+            if (!options.timeoutContext || options.timeoutContext.clearServerSelectionTimeout) {
               timeout?.clear();
+            }
             return transaction.server;
           }
           const { promise: serverPromise, resolve, reject } = (0, utils_1.promiseWithResolvers)();
@@ -75403,8 +75653,9 @@ Content-Type: ${partContentType}\r
             throw error;
           } finally {
             abortListener?.[utils_1.kDispose]();
-            if (options.timeoutContext?.clearServerSelectionTimeout)
+            if (!options.timeoutContext || options.timeoutContext.clearServerSelectionTimeout) {
               timeout?.clear();
+            }
           }
         }
         /**
@@ -75729,7 +75980,6 @@ Content-Type: ${partContentType}\r
           this.checkForNonGenuineHosts();
         }
         /**
-         * @experimental
          * An alias for {@link MongoClient.close|MongoClient.close()}.
          */
         async [Symbol.asyncDispose]() {
@@ -76190,7 +76440,6 @@ Content-Type: ${partContentType}\r
       }
       var _ChangeStream = class _ChangeStream extends mongo_types_1.TypedEventEmitter {
         /**
-         * @experimental
          * An alias for {@link ChangeStream.close|ChangeStream.close()}.
          */
         async [Symbol.asyncDispose]() {
@@ -76249,6 +76498,10 @@ Content-Type: ${partContentType}\r
         /** The cached resume token that is used to resume after the most recently returned change. */
         get resumeToken() {
           return this.cursor?.resumeToken;
+        }
+        /** Returns the currently buffered documents length of the underlying cursor. */
+        bufferedCount() {
+          return this.cursor?.bufferedCount() ?? 0;
         }
         /** Check if there is any document still available in the Change Stream */
         async hasNext() {
@@ -76592,6 +76845,7 @@ Content-Type: ${partContentType}\r
       Object.defineProperty(exports2, "__esModule", { value: true });
       exports2.GridFSBucketReadStream = void 0;
       var stream_1 = __require("stream");
+      var bson_1 = require_bson2();
       var abstract_cursor_1 = require_abstract_cursor();
       var error_1 = require_error();
       var timeout_1 = require_timeout();
@@ -76704,7 +76958,7 @@ Content-Type: ${partContentType}\r
           if (doc.n < expectedN) {
             return stream.destroy(new error_1.MongoGridFSChunkError(`ExtraChunk: Got unexpected n: ${doc.n}, expected: ${expectedN}`));
           }
-          let buf = Buffer.isBuffer(doc.data) ? doc.data : doc.data.buffer;
+          let buf = bson_1.ByteUtils.isUint8Array(doc.data) ? doc.data : doc.data.buffer;
           if (buf.byteLength !== expectedLength) {
             if (bytesRemaining <= 0) {
               return stream.destroy(new error_1.MongoGridFSChunkError(`ExtraChunk: Got unexpected n: ${doc.n}, expected file length ${stream.s.file.length} bytes but already read ${stream.s.bytesRead} bytes`));
@@ -76899,7 +77153,7 @@ Content-Type: ${partContentType}\r
           this.done = false;
           this.id = options.id ? options.id : new bson_1.ObjectId();
           this.chunkSizeBytes = options.chunkSizeBytes || this.bucket.s.options.chunkSizeBytes;
-          this.bufToStore = Buffer.alloc(this.chunkSizeBytes);
+          this.bufToStore = bson_1.ByteUtils.allocate(this.chunkSizeBytes);
           this.length = 0;
           this.n = 0;
           this.pos = 0;
@@ -77103,10 +77357,10 @@ Content-Type: ${partContentType}\r
         if (isAborted(stream, callback)) {
           return;
         }
-        const inputBuf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, encoding);
+        const inputBuf = typeof chunk === "string" ? bson_1.ByteUtils.fromUTF8(chunk) : bson_1.ByteUtils.toLocalBufferType(chunk);
         stream.length += inputBuf.length;
         if (stream.pos + inputBuf.length < stream.chunkSizeBytes) {
-          inputBuf.copy(stream.bufToStore, stream.pos);
+          bson_1.ByteUtils.copy(inputBuf, stream.bufToStore, stream.pos);
           stream.pos += inputBuf.length;
           queueMicrotask(callback);
           return;
@@ -77117,12 +77371,12 @@ Content-Type: ${partContentType}\r
         let outstandingRequests = 0;
         while (inputBufRemaining > 0) {
           const inputBufPos = inputBuf.length - inputBufRemaining;
-          inputBuf.copy(stream.bufToStore, stream.pos, inputBufPos, inputBufPos + numToCopy);
+          bson_1.ByteUtils.copy(inputBuf, stream.bufToStore, stream.pos, inputBufPos, inputBufPos + numToCopy);
           stream.pos += numToCopy;
           spaceRemaining -= numToCopy;
           let doc;
           if (spaceRemaining === 0) {
-            doc = createChunkDoc(stream.id, stream.n, Buffer.from(stream.bufToStore));
+            doc = createChunkDoc(stream.id, stream.n, new Uint8Array(stream.bufToStore));
             const remainingTimeMS = stream.timeoutContext?.remainingTimeMS;
             if (remainingTimeMS != null && remainingTimeMS <= 0) {
               return handleError(stream, new error_1.MongoOperationTimeoutError(`Upload timed out after ${stream.timeoutContext?.timeoutMS}ms`), callback);
@@ -77153,8 +77407,8 @@ Content-Type: ${partContentType}\r
         if (stream.pos === 0) {
           return checkDone(stream, callback);
         }
-        const remnant = Buffer.alloc(stream.pos);
-        stream.bufToStore.copy(remnant, 0, 0, stream.pos);
+        const remnant = bson_1.ByteUtils.allocate(stream.pos);
+        bson_1.ByteUtils.copy(stream.bufToStore, remnant, 0, 0, stream.pos);
         const doc = createChunkDoc(stream.id, stream.n, remnant);
         if (isAborted(stream, callback)) {
           return;

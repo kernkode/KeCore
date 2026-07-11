@@ -32,6 +32,7 @@ kec.vehicle.state = {
     BROKEN_WINDOWS = "brokenWindows",
     TYRES = "tyres",
     ENGINE = "engine",
+    DIRT = "dirt",
     INFO = "_kecVehicleInfo",
 }
 

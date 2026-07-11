@@ -233,6 +233,26 @@ function vehicle_methods:getBodyHealth()
     return GetVehicleBodyHealth(self.entity)
 end
 
+--- Establece la salud del motor y la sincroniza a todos los clientes.
+---@param health number 0.0 a 1000.0
+function vehicle_methods:setEngineHealth(health)
+    health = tonumber(health)
+    if not health then return end
+
+    health = math.max(0.0, math.min(1000.0, health))
+    Entity(self.entity).state:set("engineHealth", health, true)
+end
+
+--- Establece la salud del chasis y la sincroniza a todos los clientes.
+---@param health number 0.0 a 1000.0
+function vehicle_methods:setBodyHealth(health)
+    health = tonumber(health)
+    if not health then return end
+
+    health = math.max(0.0, math.min(1000.0, health))
+    Entity(self.entity).state:set("bodyHealth", health, true)
+end
+
 --- Establecer metadato sincronizados (stream)
 ---@param key any
 ---@param value any
@@ -299,4 +319,25 @@ function vehicle_methods:setSiren(index)
 
     local targetIndex = tonumber(index)
     Entity(self.entity).state:set(state.SIREN, targetIndex, true)
+end
+
+-- ============================================================
+-- Dirt Level
+-- ============================================================
+
+--- Establece el nivel de suciedad del vehiculo (0.0 = limpio, 15.0 = max sucio).
+--- El valor se replica a todos los clientes via state bag.
+---@param level number 0.0 a 15.0
+function vehicle_methods:setDirtLevel(level)
+    level = tonumber(level)
+    if not level then return end
+
+    level = math.max(0.0, math.min(15.0, level))
+    Entity(self.entity).state:set(state.DIRT, level, true)
+end
+
+--- Devuelve el nivel de suciedad del vehiculo (0.0 = limpio, 15.0 = max sucio).
+---@return number
+function vehicle_methods:getDirtLevel()
+    return Entity(self.entity).state[state.DIRT] or 0.0
 end

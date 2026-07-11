@@ -218,6 +218,26 @@ function vehicle_methods:getStreamSyncedMeta(key)
     return Entity(self.entity).state[key]
 end
 
+--- Establece el nivel de suciedad del vehiculo (0.0 = limpio, 15.0 = max sucio).
+--- Aplica directamente el native en el cliente.
+---@param level number 0.0 a 15.0
+function vehicle_methods:setDirtLevel(level)
+    if not DoesEntityExist(self.entity) then return end
+
+    level = tonumber(level)
+    if not level then return end
+
+    SetVehicleDirtLevel(self.entity, math.max(0.0, math.min(15.0, level)))
+end
+
+--- Devuelve el nivel de suciedad del vehiculo (0.0 = limpio, 15.0 = max sucio).
+---@return number
+function vehicle_methods:getDirtLevel()
+    if not DoesEntityExist(self.entity) then return 0.0 end
+
+    return GetVehicleDirtLevel(self.entity)
+end
+
 function kec.vehicle:get(entity)
     local instance = {
         entity = entity,
