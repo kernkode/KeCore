@@ -79821,28 +79821,51 @@ Content-Type: ${partContentType}\r
       // family: 4 // Descomentar si tienes problemas con IPv6
     }
   };
-  function normalizeFilter(filter) {
-    if (!filter) return {};
-    if (filter instanceof import_mongodb.ObjectId) return filter;
-    if (typeof filter === "string") {
-      return import_mongodb.ObjectId.isValid(filter) ? new import_mongodb.ObjectId(filter) : filter;
+  var HEX24 = /^[0-9a-fA-F]{24}$/;
+  function toObjectId(value) {
+    if (value instanceof import_mongodb.ObjectId) return value;
+    if (typeof value === "string") {
+      return HEX24.test(value) ? new import_mongodb.ObjectId(value) : value;
     }
-    if (Array.isArray(filter)) {
-      return filter.map(normalizeFilter);
+    if (Array.isArray(value)) return value.map(toObjectId);
+    if (value && typeof value === "object") {
+      const out = {};
+      for (const key in value) out[key] = toObjectId(value[key]);
+      return out;
     }
-    if (typeof filter === "object") {
-      const newObj = {};
-      for (const key in filter) {
-        const value = filter[key];
-        if (key === "_id" || key.endsWith("Id")) {
-          newObj[key] = normalizeFilter(value);
-        } else {
-          newObj[key] = typeof value === "object" && value !== null ? normalizeFilter(value) : value;
-        }
+    return value;
+  }
+  function fixEmptyTable(value) {
+    if (value === null || value === void 0) return {};
+    return Array.isArray(value) && value.length === 0 ? {} : value;
+  }
+  function toDates(node) {
+    if (!node || typeof node !== "object") return node;
+    if (node instanceof import_mongodb.ObjectId || node instanceof Date) return node;
+    if (Array.isArray(node)) return node.map(toDates);
+    const keys = Object.keys(node);
+    if (keys.length === 1 && keys[0] === "$date") {
+      const v = node["$date"];
+      if (typeof v === "number" || typeof v === "string") return new Date(v);
+    }
+    const out = {};
+    for (const key of keys) out[key] = toDates(node[key]);
+    return out;
+  }
+  function normalizeDoc(value) {
+    return toDates(fixEmptyTable(value));
+  }
+  function normalizeFilter(root6) {
+    const walk = (node) => {
+      if (!node || typeof node !== "object") return node;
+      if (Array.isArray(node)) return node.map(walk);
+      const out = {};
+      for (const key in node) {
+        out[key] = key === "_id" ? toObjectId(node[key]) : walk(node[key]);
       }
-      return newObj;
-    }
-    return filter;
+      return out;
+    };
+    return toDates(walk(fixEmptyTable(root6)));
   }
   var MongoService = class _MongoService {
     constructor() {
@@ -79901,13 +79924,21 @@ Content-Type: ${partContentType}\r
       const db = await service.getDb();
       const collection = db.collection(collectionName);
       const result = await operation2(collection);
-      if (result === null || result === void 0) return null;
-      if (typeof result === "object") return JSON.stringify(result);
-      return result;
+      const payload = { ok: true };
+      if (result !== null && result !== void 0) payload.data = result;
+      return JSON.stringify(payload);
     } catch (error) {
-      console.error(`\u274C [MongoDB] Error en '${collectionName}':`, error.message);
-      return JSON.stringify({ status: "error", message: error.message });
+      const message = String(error?.message ?? error);
+      console.error(`\u274C [MongoDB] Error en '${collectionName}':`, message);
+      return JSON.stringify({ ok: false, error: message });
     }
+  }
+  function updateSummary(res) {
+    return {
+      matched: res.matchedCount,
+      modified: res.modifiedCount,
+      upserted: res.upsertedId ? res.upsertedId.toHexString() : void 0
+    };
   }
   exports("connect", async (dbName) => {
     try {
@@ -79929,19 +79960,19 @@ Content-Type: ${partContentType}\r
   exports("find", (col, filter, options) => {
     return execute(
       col,
-      (c6) => c6.find(normalizeFilter(filter), options || {}).toArray()
+      (c6) => c6.find(normalizeFilter(filter), fixEmptyTable(options)).toArray()
     );
   });
   exports("insertOne", (col, doc) => {
     return execute(col, async (c6) => {
-      const res = await c6.insertOne(doc);
-      return res.insertedId;
+      const res = await c6.insertOne(normalizeDoc(doc));
+      return res.insertedId.toHexString();
     });
   });
   exports("insertMany", (col, docs) => {
     return execute(col, async (c6) => {
-      const res = await c6.insertMany(docs);
-      return Object.values(res.insertedIds);
+      const res = await c6.insertMany(toDates(docs));
+      return Object.values(res.insertedIds).map((id) => id.toHexString());
     });
   });
   exports("deleteOne", (col, filter) => {
@@ -79956,20 +79987,37 @@ Content-Type: ${partContentType}\r
       return res.deletedCount;
     });
   });
-  exports("updateOne", (col, filter, update) => {
+  exports("updateOne", (col, filter, update, options) => {
     return execute(col, async (c6) => {
-      const res = await c6.updateOne(normalizeFilter(filter), update);
-      return res.modifiedCount;
+      const res = await c6.updateOne(
+        normalizeFilter(filter),
+        normalizeDoc(update),
+        fixEmptyTable(options)
+      );
+      return updateSummary(res);
     });
   });
-  exports("updateMany", (col, filter, update) => {
+  exports("updateMany", (col, filter, update, options) => {
     return execute(col, async (c6) => {
-      const res = await c6.updateMany(normalizeFilter(filter), update);
-      return res.modifiedCount;
+      const res = await c6.updateMany(
+        normalizeFilter(filter),
+        normalizeDoc(update),
+        fixEmptyTable(options)
+      );
+      return updateSummary(res);
     });
   });
   exports("aggregate", (col, pipeline) => {
-    return execute(col, (c6) => c6.aggregate(pipeline).toArray());
+    return execute(
+      col,
+      (c6) => c6.aggregate(toDates(Array.isArray(pipeline) ? pipeline : [])).toArray()
+    );
+  });
+  exports("createIndex", (col, keys, options) => {
+    return execute(
+      col,
+      (c6) => c6.createIndex(fixEmptyTable(keys), fixEmptyTable(options))
+    );
   });
   exports("count", (col, filter) => {
     return execute(col, (c6) => c6.countDocuments(normalizeFilter(filter)));
@@ -79977,15 +80025,31 @@ Content-Type: ${partContentType}\r
   exports(
     "findOneAndUpdate",
     (col, filter, update, options) => {
-      return execute(col, async (c6) => {
-        const opts = { returnDocument: "after", ...options };
-        const res = await c6.findOneAndUpdate(
-          normalizeFilter(filter),
-          update,
-          opts
-        );
-        return res;
-      });
+      return execute(
+        col,
+        (c6) => c6.findOneAndUpdate(normalizeFilter(filter), normalizeDoc(update), {
+          returnDocument: "after",
+          ...fixEmptyTable(options)
+        })
+      );
+    }
+  );
+  exports("findOneAndDelete", (col, filter, options) => {
+    return execute(
+      col,
+      (c6) => c6.findOneAndDelete(normalizeFilter(filter), fixEmptyTable(options))
+    );
+  });
+  exports(
+    "findOneAndReplace",
+    (col, filter, replacement, options) => {
+      return execute(
+        col,
+        (c6) => c6.findOneAndReplace(normalizeFilter(filter), normalizeDoc(replacement), {
+          returnDocument: "after",
+          ...fixEmptyTable(options)
+        })
+      );
     }
   );
 })();

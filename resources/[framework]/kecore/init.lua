@@ -22,6 +22,7 @@ local chunks = {
     { "performance/server/axios",       "axios",        "server" },
     { "performance/server/http",        "http",         "server" },
     { "performance/server/discord",     "discord",      "server" },
+    { "performance/server/mongodb",     "mongodb",      "server" },
     { "performance/server/vehicle",     "vehicle",      "server" },
 }
 

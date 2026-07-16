@@ -46,6 +46,8 @@ server_scripts {
     'internal/server/libs/axios.lua',
     'internal/server/libs/http.lua',
     'internal/server/libs/discord.lua',
+    'internal/server/libs/mongodb_registry.lua',
+    'internal/server/libs/mongodb.lua',
 
     'internal/server/population.lua'
 }

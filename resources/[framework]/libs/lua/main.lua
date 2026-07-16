@@ -1,5 +1,6 @@
+-- mongodb ya no se importa desde aquí: vive en kecore como kec.mongodb
+-- (performance/server/mongodb.lua); este import queda solo para bcrypt.
 local libs = {
-    mongodb = mongodb,
     bcrypt = bcrypt
 }
 

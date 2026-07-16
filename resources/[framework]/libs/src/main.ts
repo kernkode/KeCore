@@ -5,7 +5,7 @@ import {
   ObjectId,
   MongoClientOptions,
   Collection,
-  Document,
+  UpdateResult,
 } from "mongodb";
 
 exports("bcrypt_js", () => {
@@ -63,47 +63,81 @@ const CONFIG = {
 
 // --- Utilidades ---
 
+const HEX24 = /^[0-9a-fA-F]{24}$/;
+
 /**
- * Normaliza filtros recursivamente para convertir strings hexadecimales en ObjectId.
- * Optimizado para fallar rápido si no es necesario convertir.
+ * Convierte strings hex de 24 chars a ObjectId dentro del subárbol de un `_id`
+ * (incluye operadores como { _id: { $in: [...] } }). El guard con regex es
+ * necesario porque ObjectId.isValid() también acepta cualquier string de 12
+ * bytes, lo que convertiría textos normales por accidente.
  */
-function normalizeFilter(filter: any): any {
-  if (!filter) return {};
+function toObjectId(value: any): any {
+  if (value instanceof ObjectId) return value;
+  if (typeof value === "string") {
+    return HEX24.test(value) ? new ObjectId(value) : value;
+  }
+  if (Array.isArray(value)) return value.map(toObjectId);
+  if (value && typeof value === "object") {
+    const out: any = {};
+    for (const key in value) out[key] = toObjectId(value[key]);
+    return out;
+  }
+  return value;
+}
 
-  // Caso base rápido
-  if (filter instanceof ObjectId) return filter;
+/**
+ * El msgpack de CfxLua serializa la tabla vacía {} como array []; el driver
+ * exige objetos planos para filter/update/options. Solo se aplica al valor
+ * raíz: un array vacío anidado no es distinguible desde Lua de todas formas.
+ */
+function fixEmptyTable(value: any): any {
+  if (value === null || value === undefined) return {};
+  return Array.isArray(value) && value.length === 0 ? {} : value;
+}
 
-  // String ID directo
-  if (typeof filter === "string") {
-    return ObjectId.isValid(filter) ? new ObjectId(filter) : filter;
+/**
+ * Fechas BSON desde Lua (convención Extended JSON): el marcador
+ * { "$date": <ms | string ISO> } se convierte a Date real al escribir.
+ * Lua no tiene tipo fecha, y sin Date real los índices TTL no expiran nada.
+ * A la vuelta no hay conversión: JSON.stringify serializa Date como ISO-8601.
+ */
+function toDates(node: any): any {
+  if (!node || typeof node !== "object") return node;
+  if (node instanceof ObjectId || node instanceof Date) return node;
+  if (Array.isArray(node)) return node.map(toDates);
+
+  const keys = Object.keys(node);
+  if (keys.length === 1 && keys[0] === "$date") {
+    const v = node["$date"];
+    if (typeof v === "number" || typeof v === "string") return new Date(v);
   }
 
-  // Arrays ($in, $or, etc)
-  if (Array.isArray(filter)) {
-    return filter.map(normalizeFilter);
-  }
+  const out: any = {};
+  for (const key of keys) out[key] = toDates(node[key]);
+  return out;
+}
 
-  // Objetos
-  if (typeof filter === "object") {
-    const newObj: any = {};
-    for (const key in filter) {
-      const value = filter[key];
+/** Normaliza documentos/updates: tabla vacía de msgpack + marcadores $date. */
+function normalizeDoc(value: any): any {
+  return toDates(fixEmptyTable(value));
+}
 
-      // Solo convertimos _id o si es un operador que podría contener IDs
-      if (key === "_id" || key.endsWith("Id")) {
-        newObj[key] = normalizeFilter(value);
-      } else {
-        // Recursión profunda solo si es objeto o array
-        newObj[key] =
-          typeof value === "object" && value !== null
-            ? normalizeFilter(value)
-            : value;
-      }
+/**
+ * Normaliza un filtro: solo el subárbol de claves `_id` se convierte a
+ * ObjectId. Sin heurísticas sobre otros campos (`*Id`): un string que
+ * "parezca" hex no debe cambiar de tipo silenciosamente.
+ */
+function normalizeFilter(root: any): any {
+  const walk = (node: any): any => {
+    if (!node || typeof node !== "object") return node;
+    if (Array.isArray(node)) return node.map(walk); // $or / $and
+    const out: any = {};
+    for (const key in node) {
+      out[key] = key === "_id" ? toObjectId(node[key]) : walk(node[key]);
     }
-    return newObj;
-  }
-
-  return filter;
+    return out;
+  };
+  return toDates(walk(fixEmptyTable(root)));
 }
 
 // --- Singleton de Conexión ---
@@ -173,11 +207,17 @@ class MongoService {
   }
 }
 
-// --- Wrapper Genérico (Safe Execute) ---
-async function execute<T>(
+// --- Wrapper Genérico ---
+//
+// Protocolo del bridge: TODA operación de datos devuelve un string JSON con
+// forma { ok: true, data?: ... } | { ok: false, error: "..." }. Así el lado
+// Lua (kec.mongodb) distingue "no encontrado" (ok sin data) de "falló la DB"
+// (ok=false) — el formato anterior devolvía un string de error que los
+// consumidores confundían con datos o comparaban contra números.
+async function execute(
   collectionName: string,
-  operation: (col: Collection) => Promise<T>,
-): Promise<string | number | boolean | null> {
+  operation: (col: Collection) => Promise<any>,
+): Promise<string> {
   try {
     const service = MongoService.getInstance();
     const db = await service.getDb();
@@ -185,14 +225,23 @@ async function execute<T>(
 
     const result = await operation(collection);
 
-    // Retorno optimizado para Lua/FiveM
-    if (result === null || result === undefined) return null;
-    if (typeof result === "object") return JSON.stringify(result);
-    return result as any;
+    const payload: { ok: true; data?: any } = { ok: true };
+    if (result !== null && result !== undefined) payload.data = result;
+    return JSON.stringify(payload);
   } catch (error: any) {
-    console.error(`❌ [MongoDB] Error en '${collectionName}':`, error.message);
-    return JSON.stringify({ status: "error", message: error.message });
+    const message = String(error?.message ?? error);
+    console.error(`❌ [MongoDB] Error en '${collectionName}':`, message);
+    return JSON.stringify({ ok: false, error: message });
   }
+}
+
+/** Forma de retorno común para updateOne/updateMany. */
+function updateSummary(res: UpdateResult) {
+  return {
+    matched: res.matchedCount,
+    modified: res.modifiedCount,
+    upserted: res.upsertedId ? res.upsertedId.toHexString() : undefined,
+  };
 }
 
 // --- EXPORTS ---
@@ -223,21 +272,21 @@ exports("findOne", (col: string, filter: any) => {
 
 exports("find", (col: string, filter: any, options?: any) => {
   return execute(col, (c) =>
-    c.find(normalizeFilter(filter), options || {}).toArray(),
+    c.find(normalizeFilter(filter), fixEmptyTable(options)).toArray(),
   );
 });
 
 exports("insertOne", (col: string, doc: any) => {
   return execute(col, async (c) => {
-    const res = await c.insertOne(doc);
-    return res.insertedId;
+    const res = await c.insertOne(normalizeDoc(doc));
+    return res.insertedId.toHexString(); // hex plano, sin JSON anidado
   });
 });
 
 exports("insertMany", (col: string, docs: any[]) => {
   return execute(col, async (c) => {
-    const res = await c.insertMany(docs);
-    return Object.values(res.insertedIds); // Devuelve array de IDs
+    const res = await c.insertMany(toDates(docs));
+    return Object.values(res.insertedIds).map((id) => id.toHexString());
   });
 });
 
@@ -255,42 +304,76 @@ exports("deleteMany", (col: string, filter: any) => {
   });
 });
 
-exports("updateOne", (col: string, filter: any, update: any) => {
+exports("updateOne", (col: string, filter: any, update: any, options?: any) => {
   return execute(col, async (c) => {
-    const res = await c.updateOne(normalizeFilter(filter), update);
-    return res.modifiedCount;
+    const res = await c.updateOne(
+      normalizeFilter(filter),
+      normalizeDoc(update),
+      fixEmptyTable(options),
+    );
+    return updateSummary(res);
   });
 });
 
-exports("updateMany", (col: string, filter: any, update: any) => {
+exports("updateMany", (col: string, filter: any, update: any, options?: any) => {
   return execute(col, async (c) => {
-    const res = await c.updateMany(normalizeFilter(filter), update);
-    return res.modifiedCount;
+    const res = await c.updateMany(
+      normalizeFilter(filter),
+      normalizeDoc(update),
+      fixEmptyTable(options),
+    );
+    return updateSummary(res);
   });
 });
 
 exports("aggregate", (col: string, pipeline: any[]) => {
-  return execute(col, (c) => c.aggregate(pipeline).toArray());
+  return execute(col, (c) =>
+    c.aggregate(toDates(Array.isArray(pipeline) ? pipeline : [])).toArray(),
+  );
+});
+
+// Índices. Imprescindible para TTL: createIndex({ expiresAt: 1 },
+// { expireAfterSeconds: 0 }) + docs con expiresAt de tipo Date ($date).
+// Idempotente si la definición no cambia; redefinir el mismo campo con
+// options distintas devuelve error de Mongo (drop manual o collMod).
+exports("createIndex", (col: string, keys: any, options?: any) => {
+  return execute(col, (c) =>
+    c.createIndex(fixEmptyTable(keys), fixEmptyTable(options)),
+  );
 });
 
 exports("count", (col: string, filter: any) => {
   return execute(col, (c) => c.countDocuments(normalizeFilter(filter)));
 });
 
-// En drivers modernos (v5+), findOneAndUpdate devuelve un objeto ModifyResult o el doc directo según config.
-// Forzamos returnDocument: 'after' para obtener el nuevo, o 'before' para el viejo.
+// En el driver v6+ findOneAnd* devuelve el documento directamente (o null).
+// returnDocument por defecto 'after'; el caller puede sobreescribirlo en options.
 exports(
   "findOneAndUpdate",
-  (col: string, filter: any, update: any, options: any) => {
-    return execute(col, async (c) => {
-      const opts = { returnDocument: "after", ...options }; // Default devuelve el nuevo
-      const res = await c.findOneAndUpdate(
-        normalizeFilter(filter),
-        update,
-        opts,
-      );
-      // Compatibilidad con drivers nuevos que devuelven el doc directamente o null
-      return res;
-    });
+  (col: string, filter: any, update: any, options?: any) => {
+    return execute(col, (c) =>
+      c.findOneAndUpdate(normalizeFilter(filter), normalizeDoc(update), {
+        returnDocument: "after",
+        ...fixEmptyTable(options),
+      }),
+    );
+  },
+);
+
+exports("findOneAndDelete", (col: string, filter: any, options?: any) => {
+  return execute(col, (c) =>
+    c.findOneAndDelete(normalizeFilter(filter), fixEmptyTable(options)),
+  );
+});
+
+exports(
+  "findOneAndReplace",
+  (col: string, filter: any, replacement: any, options?: any) => {
+    return execute(col, (c) =>
+      c.findOneAndReplace(normalizeFilter(filter), normalizeDoc(replacement), {
+        returnDocument: "after",
+        ...fixEmptyTable(options),
+      }),
+    );
   },
 );
