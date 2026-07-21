@@ -218,6 +218,33 @@ function native:setComponentVariation(componentId, drawableId, textureId, palett
     }
 end
 
+--- Aplica una prenda de un DLC/addon (SHOP_PED_APPAREL) al ped por el nombre de
+--- su colección. Equivalente a setDlcClothes de alt:V: en FiveM la vía DLC-aware
+--- son las natives de colección. `dlcName` es el nombre de colección del addon
+--- (el <dlcName> del .meta, p.ej. "sprayground"); `drawableId`/`textureId` son
+--- LOCALES a esa colección. Cachea el índice GLOBAL resultante para que la
+--- restauración de ropa tras respawn (applyDefaultClothes) lo vuelva a poner.
+function native:setDlcClothes(dlcName, componentId, drawableId, textureId, paletteId)
+    local ped = PlayerPedId()
+    paletteId = paletteId or 0
+
+    SetPedCollectionComponentVariation(ped, componentId, dlcName, drawableId, textureId, paletteId)
+
+    -- Índice global equivalente (varía según los DLC del ped): lo guardamos para
+    -- que el restore por SetPedComponentVariation tras revivir siga funcionando.
+    local globalDrawable = GetPedDrawableGlobalIndexFromCollection(ped, componentId, dlcName, drawableId)
+
+    if not ped_variations[ped] then
+        ped_variations[ped] = {}
+    end
+
+    ped_variations[ped][componentId] = {
+        drawable = globalDrawable,
+        texture = textureId,
+        palette = paletteId
+    }
+end
+
 function native:hasComponentVariation(componentId)
     if not ped_variations[PlayerPedId()] then
         return false

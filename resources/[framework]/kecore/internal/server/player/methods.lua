@@ -15,6 +15,15 @@ function player_methods:setVariation(componentId, drawableId, textureId, palette
     kec:emitClient("kec:setComponentVariation", self.id, componentId, drawableId, textureId, paletteId)
 end
 
+--- Aplica ropa de un DLC/addon (colección) por su nombre. Equivalente a
+--- setDlcClothes de otros frameworks: resuelve el índice global del drawable
+--- desde la colección, así funciona con addons cuyo índice varía según los
+--- DLC cargados. `drawableId`/`textureId` son LOCALES a la colección.
+--- @param collection string Nombre de la colección/DLC (p.ej. "sprayground")
+function player_methods:setDlcClothes(collection, componentId, drawableId, textureId, paletteId)
+    kec:emitClient("kec:setDlcClothes", self.id, collection, componentId, drawableId, textureId, paletteId)
+end
+
 function player_methods:setModel(modelHash)
     if type(modelHash) == "string" then
         modelHash = kec:hash(modelHash)

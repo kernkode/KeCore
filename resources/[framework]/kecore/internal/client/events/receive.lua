@@ -9,3 +9,7 @@ end)
 kec:on("kec:setComponentVariation", function(componentId, drawableId, textureId, paletteId)
     native:setComponentVariation(componentId, drawableId, textureId, paletteId)
 end)
+
+kec:on("kec:setDlcClothes", function(collection, componentId, drawableId, textureId, paletteId)
+    native:setDlcClothes(collection, componentId, drawableId, textureId, paletteId)
+end)
