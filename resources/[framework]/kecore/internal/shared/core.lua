@@ -2,7 +2,8 @@
 kec = {
     debugMode = false,
     debugEvents = false,
-    isWorldLoaded = false
+    isWorldLoaded = false,
+    state = {} -- Almacenamiento seguro para variables entre scripts (reemplaza a _G)
 }
 
 metadata = {
