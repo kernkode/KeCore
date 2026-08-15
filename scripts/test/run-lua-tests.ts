@@ -43,8 +43,9 @@ async function testSyntax() {
     files.push(path.join(KECORE, 'internal/shared/core.lua'));
 
     for (const f of files.sort()) {
-        let src = await fs.readFile(f, 'utf8');
-        if (f.endsWith('natives.lua')) src = stripCfxHashes(src);
+        // Se limpia en TODOS: los backticks no son Lua válido en ningún fichero, y
+        // filtrar por nombre dejaba fuera a los nuevos (weapons.lua, models.lua...).
+        const src = stripCfxHashes(await fs.readFile(f, 'utf8'));
         lua.global.set('__SRC', src);
         const err = await lua.doString('local fn, e = load(__SRC, "chunk"); return e');
         assert(err == null, `loads: ${path.relative(KECORE, f).replace(/\\/g, '/')}${err ? `  → ${err}` : ''}`);
@@ -74,6 +75,8 @@ async function makeKecVM(isServer: boolean, managerSrc?: string) {
     g.set('GetInvokingResource', () => invokingResource);
     g.set('Wait', () => {});
     g.set('exports', (_name: string, _fn: any) => {}); // core.lua: exports('get', ...)
+    g.set('TriggerEvent', (name: string, ...args: any[]) => { void name; void args; });
+    g.set('GetCurrentResourceName', () => 'kecore'); // core.lua: kec.state lo pide al cargar
 
     await lua.doString(await read('internal/shared/core.lua'));
     await lua.doString(managerSrc ?? await read('internal/shared/events/manager.lua'));

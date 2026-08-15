@@ -29,7 +29,12 @@ function kec.label2d:showText(text, options)
         text = text,
         color = options.color or { r = 255, g = 255, b = 255 },
         expire = GetGameTimer() + (options.duration or 2000),
-        position = options.position or { x = 0.5, y = 0.90 },
+        -- y = 0.83: bajo, pero no tanto como 0.90 — la hotbar del inventario va centrada
+        -- abajo (bottom 26px + 52px de slot, y hasta 96px el aviso del propio inventario),
+        -- así que a 0.90 el toast caía justo detrás: a 720p entero, a 1080p la mitad de
+        -- abajo. Ningún sitio que llame a label2d pasa `position`, así que la altura de
+        -- TODOS los avisos (motor, compuerta, seguro, inventario...) la manda esta línea.
+        position = options.position or { x = 0.5, y = 0.83 },
         font = options.font or 4,
         scale = options.scale or 0.45
     }
@@ -40,7 +45,10 @@ end
 --- Atajos de color
 function kec.label2d:success(text, duration, options)
     options = options or {}
-    options.color = options.color or { r = 60, g = 255, b = 60 }
+    -- Verde menta claro en vez del verde puro (60,255,60): sobre el día de GTA y con el
+    -- borde negro del DrawText, el verde saturado se leía apagado. Subir el rojo y el azul
+    -- lo aclara sin perder el "esto ha ido bien".
+    options.color = options.color or { r = 130, g = 255, b = 165 }
     options.duration = duration or options.duration
     return self:showText(text, options)
 end

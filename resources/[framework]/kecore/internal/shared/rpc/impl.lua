@@ -34,11 +34,14 @@ end
 local requestCounter = 0
 
 local function getNextId()
-    requestCounter = requestCounter + 1
-    -- Si llega al límite de 16 bits, reiniciamos
-    if requestCounter > 65535 then 
-        requestCounter = 1 
-    end
+    local attempts = 0
+    repeat
+        requestCounter = requestCounter + 1
+        if requestCounter > 65535 then 
+            requestCounter = 1 
+        end
+        attempts = attempts + 1
+    until not pendingRequests[requestCounter] or attempts >= 65535
     return requestCounter
 end
 

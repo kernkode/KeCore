@@ -10,18 +10,25 @@ kec:isClient() -- Returns true if currently running on the client
 kec:hash(str)  -- Generates a FiveM GetHashKey
 ```
 
-### Shared State (`kec.state`)
+### Shared Reactive State (`kec.state`)
 
-To avoid using Lua's global environment table `_G`, KeCore provides `kec.state` to store variables across different files within the same resource or framework cleanly.
+To avoid using Lua's global environment table `_G`, KeCore provides a reactive `kec.state` store to share variables across scripts cleanly.
 
 ```lua
--- Save state variable
+-- Direct property assignment (backward compatible)
 kec.state.concussionEndTime = GetGameTimer() + 5000
 
--- Read state variable from another script
-if kec.state.concussionEndTime and GetGameTimer() < kec.state.concussionEndTime then
-    -- Player is currently concussed
-end
+-- Explicit getter & setter
+kec.state:set("concussionEndTime", GetGameTimer() + 5000)
+local endTime = kec.state:get("concussionEndTime")
+
+-- Subscribe to state change events (Reactive)
+local unsubscribe = kec.state:onChange("concussionEndTime", function(newValue, oldValue)
+    print("Concussion end time updated from", oldValue, "to", newValue)
+end)
+
+-- Unsubscribe when listener is no longer needed
+unsubscribe()
 ```
 
 ### Logging System

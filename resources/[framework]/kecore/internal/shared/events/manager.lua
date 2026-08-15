@@ -46,7 +46,11 @@ function kec:registerSingleEvent(name, callback)
 
             local ok, cbErr = callFunc(callback, ...)
 
-            if not ok and kec.debugEvents then
+            -- El fallo de un callback SIEMPRE se imprime. Detrás de `debugEvents` (false
+            -- por defecto) cualquier excepción de un handler quedaba muda: un
+            -- kec:onPlayerLoaded que reventaba dejaba al cliente en la pantalla de carga
+            -- sin una línea en consola. El pcall sigue: un handler roto no tumba al resto.
+            if not ok then
                 print(("^1[events] ERROR en el callback del evento '%s': %s^7"):format(name, cbErr))
             end
         end)
@@ -68,8 +72,8 @@ function kec:onLocal(name, callback)
     local handler = function(...)
         -- Use pcall to safely execute the provided callback, preventing resource crashes.
         local success, err = pcall(callback, ...)
-        -- If an error occurred and debug mode is on, print the error to the console.
-        if not success and kec.debugEvents then
+        -- Mismo criterio que en kec:on: el error del handler se imprime siempre.
+        if not success then
             print(("^1[events] ERROR en el callback del evento local '%s': %s^7"):format(name, err))
         end
     end

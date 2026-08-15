@@ -5,6 +5,11 @@ local function instance_player(src)
 
     local playerKey = tostring(src)
 
+    if pending_cleanups[playerKey] then
+        pending_cleanups[playerKey]:cancel()
+        pending_cleanups[playerKey] = nil
+    end
+
     if player_cache[playerKey] then
         return player_cache[playerKey]
     end

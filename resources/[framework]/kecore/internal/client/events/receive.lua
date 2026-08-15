@@ -13,3 +13,15 @@ end)
 kec:on("kec:setDlcClothes", function(collection, componentId, drawableId, textureId, paletteId)
     native:setDlcClothes(collection, componentId, drawableId, textureId, paletteId)
 end)
+
+kec:on("kec:setPropIndex", function(propId, drawableId, textureId)
+    native:setPropIndex(propId, drawableId, textureId)
+end)
+
+kec:on("kec:clearProp", function(propId)
+    native:clearProp(propId)
+end)
+
+kec:on("kec:setIntoVehicle", function(netId, seat)
+    native:warpIntoVehicle(netId, seat)
+end)

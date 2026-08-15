@@ -246,6 +246,12 @@ kec.vehicle.models = {
     `fmj2`,            `gt750`,           `itali2`,          `keitora`,
     `luiva`,           `polbuffalo`,      `polbuffalo6`,     `sentinel6`,
     `vivanite2`,       `xtreme`,
+
+    -- 1.73 The Kortz Center Heist
+    `caracara3`,       `cartuccia`,       `driftcoquette`,   `driftdominator8`,
+    `driftelegy`,      `estride`,         `horus`,           `laufer`,
+    `lrcgt`,           `merula`,          `polignus`,        `trflat2`,
+    `velenogt`,        `warden`,
 }
 
 -- Inicializar la tabla de hashes

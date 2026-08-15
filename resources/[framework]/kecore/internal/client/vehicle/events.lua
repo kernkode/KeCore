@@ -213,11 +213,21 @@ AddStateBagChangeHandler(state.TYRES, nil, function(bagName, key, value, _unused
 
     -- The tyres payload is keyed by tyre index as a STRING (see getTyresBurst),
     -- so iterate with pairs + tonumber; ipairs would find nothing and never apply.
+    --
+    -- Solo se toca la rueda si su estado real NO coincide ya con el que llega: el handler de
+    -- daño de abajo reescribe este statebag en CADA impacto y los statebags no deduplican,
+    -- así que reaplicar SetVehicleTyreBurst reventaba otra vez (sonido + efecto) una rueda ya
+    -- reventada, y encima la ascendía a "sólo llanta" por el onRim = true.
+    -- ponytail: el payload es un bool, así que no distingue pinchada de sólo-llanta; la
+    -- primera sincronización en los demás clientes siempre deja llanta. Guardar el flag
+    -- de onRim si esa diferencia visual llega a molestar.
     for i, isBurst in pairs(value) do
         local index = tonumber(i)
-        if isBurst then
+        local burst = IsVehicleTyreBurst(entity, index, false) == 1
+
+        if isBurst and not burst then
             SetVehicleTyreBurst(entity, index, true, 1000.0)
-        else
+        elseif burst and not isBurst then
             SetVehicleTyreFixed(entity, index)
         end
     end

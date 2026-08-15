@@ -7,22 +7,24 @@ local chunks = {
     { "performance/shared/lru_cache",   "lru_cache" },
     { "performance/shared/utils",       "utils" },
     { "performance/shared/enum",        "enum" },
+    { "performance/shared/weapons",     "weapons" },
 
     { "performance/client/raycast",     "raycast",      "client" },
     { "performance/client/keys",        "keys",         "client" },
     { "performance/client/label3d",     "label3d",      "client" },
     { "performance/client/label2d",     "label2d",      "client" },
     { "performance/client/scaleform",   "scaleform",    "client" },
-    --{ "performance/client/world",       "/",      "client" },
     { "performance/client/natives",     "natives",      "client" },
     { "performance/client/vehicle",     "vehicle",      "client" },
     { "performance/client/controls",    "controls",     "client" },
+    { "performance/client/events",      "/",            "client" },
     
     { "performance/server/os",          "os",           "server" },
     { "performance/server/axios",       "axios",        "server" },
     { "performance/server/http",        "http",         "server" },
     { "performance/server/discord",     "discord",      "server" },
     { "performance/server/mongodb",     "mongodb",      "server" },
+    { "performance/server/events",      "/",            "server" },
     { "performance/server/vehicle",     "vehicle",      "server" },
 }
 
@@ -33,6 +35,75 @@ local name_resource = "kecore"
 kec = setmetatable(exports[name_resource]:get() or {}, {
     __index = function() return {} end
 })
+
+-- Estado compartido entre recursos: copia local de los valores (leer = acceso a
+-- tabla, sin salto entre runtimes) y las escrituras se replican por evento del lado,
+-- así todos convergen y los onChange saltan en todos. Ver internal/shared/core.lua.
+local STATE_SYNC = "kec:state:sync"
+local thisResource = GetCurrentResourceName()
+
+-- Foto inicial: un recurso que arranca después de kecore no debe empezar a ciegas.
+-- pcall porque `bun run update:core` puede traer un kecore sin este export y no
+-- vale la pena tumbar el arranque del recurso entero por eso.
+local okSnapshot, snapshot = pcall(function() return exports[name_resource]:stateSnapshot() end)
+local stateValues = (okSnapshot and type(snapshot) == "table") and snapshot or {}
+local stateListeners = {}
+
+local function applyState(key, value)
+    local oldValue = stateValues[key]
+    if oldValue == value then return false end
+    stateValues[key] = value
+
+    local listeners = stateListeners[key]
+    if listeners then
+        for i = #listeners, 1, -1 do
+            pcall(listeners[i], value, oldValue)
+        end
+    end
+    return true
+end
+
+local stateObj = setmetatable({}, {
+    __index = function(_, key)
+        return stateValues[key]
+    end,
+    __newindex = function(_, key, value)
+        if applyState(key, value) then
+            TriggerEvent(STATE_SYNC, key, value, thisResource)
+        end
+    end
+})
+
+AddEventHandler(STATE_SYNC, function(key, value, from)
+    if from ~= thisResource then applyState(key, value) end
+end)
+
+function stateObj:get(key)
+    return stateValues[key]
+end
+
+function stateObj:set(key, value)
+    stateObj[key] = value
+end
+
+function stateObj:onChange(key, callback)
+    if type(callback) ~= "function" then return function() end end
+    stateListeners[key] = stateListeners[key] or {}
+    table.insert(stateListeners[key], callback)
+
+    return function()
+        if stateListeners[key] then
+            for i, cb in ipairs(stateListeners[key]) do
+                if cb == callback then
+                    table.remove(stateListeners[key], i)
+                    break
+                end
+            end
+        end
+    end
+end
+
+kec.state = stateObj
 
 metadata = kec.metadata or {
     player = {},

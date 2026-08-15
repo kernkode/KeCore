@@ -11,6 +11,13 @@ function player_methods:setCoords(x, y, z, rot)
     kec:emitClient("kec:setCoords", self.id, x, y, z, rot)
 end
 
+function player_methods:setIntoVehicle(vehicle, seat)
+    seat = seat or -1
+    local netId = type(vehicle) == "table" and vehicle.entity and NetworkGetNetworkIdFromEntity(vehicle.entity)
+        or type(vehicle) == "number" and NetworkGetNetworkIdFromEntity(vehicle) or vehicle
+    kec:emitClient("kec:setIntoVehicle", self.id, netId, seat)
+end
+
 function player_methods:setVariation(componentId, drawableId, textureId, paletteId)
     kec:emitClient("kec:setComponentVariation", self.id, componentId, drawableId, textureId, paletteId)
 end
@@ -22,6 +29,17 @@ end
 --- @param collection string Nombre de la colección/DLC (p.ej. "sprayground")
 function player_methods:setDlcClothes(collection, componentId, drawableId, textureId, paletteId)
     kec:emitClient("kec:setDlcClothes", self.id, collection, componentId, drawableId, textureId, paletteId)
+end
+
+--- Pone un PROP en el ped (sombrero, gafas, pendientes, reloj). `propId` es un
+--- kec.enum.ePedPropIdx, que es un índice distinto del de los componentes de ropa.
+function player_methods:setPropIndex(propId, drawableId, textureId)
+    kec:emitClient("kec:setPropIndex", self.id, propId, drawableId, textureId)
+end
+
+--- Quita el prop de ese hueco: los props no tienen drawable vacío al que volver.
+function player_methods:clearProp(propId)
+    kec:emitClient("kec:clearProp", self.id, propId)
 end
 
 function player_methods:setModel(modelHash)
@@ -127,6 +145,30 @@ end
 
 function player_methods:ped()
     return GetPlayerPed(self.id)
+end
+
+--- Instancia (routing bucket) en la que está el jugador. 0 = mundo normal.
+function player_methods:getBucket()
+    return GetPlayerRoutingBucket(self.id)
+end
+
+--- Mueve al jugador a otra instancia y AVISA del cambio
+--- (`kec:on_player_bucket_changed`). FiveM no tiene evento propio para esto, así que
+--- este es el único camino: quien llame a SetPlayerRoutingBucket a pelo deja a los
+--- recursos que dependen de la instancia (p.ej. los drops del inventario) creyendo que
+--- el jugador sigue en la anterior.
+---@param bucket number
+---@return boolean ok
+function player_methods:setBucket(bucket)
+    bucket = math.floor(tonumber(bucket) or -1)
+    if bucket < 0 then return false end
+
+    local previous = GetPlayerRoutingBucket(self.id)
+    if previous == bucket then return true end
+
+    SetPlayerRoutingBucket(self.id, bucket)
+    kec:emit("kec:onPlayerBucketChanged", self.id, bucket, previous)
+    return true
 end
 
 function player_methods:clearMetadata()

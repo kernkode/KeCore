@@ -69,6 +69,7 @@ client_scripts {
     'internal/client/controls/impl.lua',
 
     'internal/client/events/custom.lua',
+    'internal/client/events/game_events.lua',
     'internal/client/events/receive.lua',
     'internal/client/events/metadata.lua',
 

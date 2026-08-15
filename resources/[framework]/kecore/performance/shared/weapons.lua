@@ -1,6 +1,9 @@
-kec.weapons = {}
+-- AUTO-GENERATED from internal/shared/weapons.lua by scripts/builder/gen-performance.ts — DO NOT EDIT
+-- Edit the internal/ source and run `bun run gen:performance` to regenerate.
 
-kec.weapons.data = {
+local weapons = {}
+
+weapons.data = {
     -- Heavy
     [`WEAPON_RPG`] = {name = "RPG", key = "WEAPON_RPG", gunFire = false},
     [`WEAPON_GRENADELAUNCHER`] = {name = "Grenade Launcher", key = "WEAPON_GRENADELAUNCHER", gunFire = false},
@@ -135,40 +138,42 @@ kec.weapons.data = {
     [`WEAPON_METALDETECTOR`] = {name = "Metal Detector", key = "WEAPON_METALDETECTOR", gunFire = false},
 }
 
--- Derivada de kec.weapons.data para no mantener dos listas de 113 armas en
+-- Derivada de weapons.data para no mantener dos listas de 113 armas en
 -- paralelo: cada entrada ya lleva su `key` y la clave de la tabla es su hash.
-kec.weapons.models = {}
-for hash, weapon in pairs(kec.weapons.data) do
-    kec.weapons.models[weapon.key] = hash
+weapons.models = {}
+for hash, weapon in pairs(weapons.data) do
+    weapons.models[weapon.key] = hash
 end
 
 -- Función para verificar si existe un arma
-function kec.weapons:has(weaponHash)
-    return kec.weapons.data[weaponHash] ~= nil
+function weapons:has(weaponHash)
+    return weapons.data[weaponHash] ~= nil
 end
 
 -- Función para obtener el nombre del arma
-function kec.weapons:getWeaponName(weaponHash)
-    local weapon = kec.weapons.data[weaponHash]
+function weapons:getWeaponName(weaponHash)
+    local weapon = weapons.data[weaponHash]
     return weapon and weapon.name or 'Unknown'
 end
 
 -- Función para obtener el key del arma
-function kec.weapons:getWeaponKey(weaponHash)
-    local weapon = kec.weapons.data[weaponHash]
+function weapons:getWeaponKey(weaponHash)
+    local weapon = weapons.data[weaponHash]
     return weapon and weapon.key or 'WEAPON_UNKNOWN'
 end
 
 -- Función para obtener todos los datos del arma
-function kec.weapons:getWeaponData(weaponHash)
-    return kec.weapons.data[weaponHash] or {name = "Unknown", key = "WEAPON_UNKNOWN", gunFire = false}
+function weapons:getWeaponData(weaponHash)
+    return weapons.data[weaponHash] or {name = "Unknown", key = "WEAPON_UNKNOWN", gunFire = false}
 end
 
 -- Función para obtener el nombre desde el hash (alias para compatibilidad)
-function kec.weapons:getNameFromHash(weaponHash)
+function weapons:getNameFromHash(weaponHash)
     return self:getWeaponName(weaponHash)
 end
 
-function kec.weapons:isGunFire(weaponHash)
-    return kec.weapons.data[weaponHash] and kec.weapons.data[weaponHash].gunFire
+function weapons:isGunFire(weaponHash)
+    return weapons.data[weaponHash] and weapons.data[weaponHash].gunFire
 end
+
+return weapons
