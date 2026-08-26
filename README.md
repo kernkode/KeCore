@@ -1,49 +1,214 @@
-<div align="center">
-  <h1>🚀 KeCore 2.0</h1>
-  <p><b>Build fast. Stay safe. Scale freely.</b></p>
-  <p>The definitive framework for FiveM, powered by Bun.</p>
-</div>
+# KeCore
 
----
+KeCore is a FiveM framework and development environment. The framework itself is Lua and runs inside FXServer; around it sits a Bun toolchain that manages the server artifact, compiles TypeScript resources, reloads them on save, and exposes a REST API for process control.
 
-## 🎯 What is KeCore?
+Everything the framework exposes is reachable through one global table, `kec`.
 
-Traditional FiveM development is often plagued by slow server restarts, spaghetti code, security vulnerabilities, and complex setups that steal your time away from what truly matters: **building incredible experiences for your players**.
+## Requirements
 
-**KeCore** was born to break that cycle. It is a modern, rock-solid, and blazingly fast framework designed from the ground up to radically change how you develop on FiveM. Built on top of **Bun 1.x**, KeCore provides an environment where speed, security, and Developer Experience (DX) mark a before and after in your workflow.
+| Requirement | Notes |
+| --- | --- |
+| Bun | 1.x — runs the toolchain, no Node.js installation needed |
+| FXServer | downloaded automatically into `artifacts/` |
+| License key | a cfx.re key from [keymaster](https://keymaster.fivem.net) |
+| MongoDB | only if you use `kec.mongodb` |
 
-## 💡 Why use KeCore? (The End of the Headache)
+## Setup
 
-If you are tired of restarting your server for every minor change or living in fear of modder injections and exploits, KeCore is your new tool of choice. Here are the reasons to make the jump:
+```bash
+bun install                    # postinstall downloads the recommended FXServer build
+cp .env.example .env
+cp config.cfg.example config.cfg
+cp server.cfg.example server.cfg
+```
 
-### ⚡ Unmatched Speed (True Hot Reload)
-Forget about compiling, bundling, and restarting. Thanks to the Bun engine, KeCore cold-starts in less than a second. But the real magic is its **True Hot Reload**: edit any `.ts` or `.lua` file and see the changes reflected **instantly** live. No script restarts, no lost state variables. You get in the zone, and you stay in the zone.
+The three config files are gitignored, so each machine keeps its own. Fill in at least:
 
-### 🛡️ Secure by Design (Zero-Trust)
-In FiveM, you cannot trust the client, and KeCore assumes this at its core.
-- **Runtime Zod:** Through `kec.zod`, strict data contracts are enforced on every payload that crosses the network.
-- **Secure RPC:** Events and remote procedure calls come with solid client/server boundaries, origin checks, and invalidation of malicious data. Eliminate ghost triggers from day one.
+- `.env` — `API_KEY`, `ENDPOINT_TCP`, `ENDPOINT_UDP`, `FXSERVER`
+- `server.cfg` — `sv_licenseKey`
+- `config.cfg` — `mongodb_url`, if MongoDB is used
 
-### 🧰 Batteries Included
-Development shouldn't require wasting a week piecing together standalone libraries. KeCore comes out of the box with everything ready to use:
-- **Database:** Fluent query builder and native integration with MongoDB.
-- **Networking:** Clean, built-in modules for HTTP requests.
-- **Optimization:** In-memory LRU Cache with precise expiration control (TTL).
-- **Communication:** An asynchronous, highly-typed RPC system with configurable timeouts.
+Then start the environment:
 
-### 🏭 Production Ready
-KeCore is not a proof of concept. Its architecture is built to scale, allowing you to support massive player bases with exceptional performance, all while keeping your codebase clean, modular, and easy to maintain for your entire team.
+```bash
+bun run dev
+```
 
----
+This regenerates the framework's `performance/` tree, compiles every TypeScript resource, starts FXServer and the REST API, and watches `resources/` for changes. The FXServer console is attached to the same terminal, so server commands can be typed directly into it.
 
-## 🚀 Start Building
+## Scripts
 
-Stop fighting your infrastructure and spend your time building features your players will love.
+| Command | Description |
+| --- | --- |
+| `bun run dev` | Start the full development environment |
+| `bun run gen:performance` | Regenerate `performance/` from `internal/` |
+| `bun run update` | Install the recommended FXServer build |
+| `bun run update:latest` | Install the latest FXServer build |
+| `bun run update:version <build>` | Install a specific build number |
+| `bun run update:core` | Sync `kecore/` and `scripts/` from the upstream repository, comparing git SHAs. Overwrites local changes in those paths |
 
-📚 **[Check out the Official Documentation](https://kecore-docs.vercel.app/)**
+The framework's NUI overlay is a separate Svelte application and is built on demand:
 
-<br>
+```bash
+cd "resources/[framework]/kecore/svelte-src"
+bun install && bun run build     # output: ../html
+```
 
-<div align="center">
-  <sub>MIT Licensed • Built with ❤️ for the FiveM community.</sub>
-</div>
+## Configuration
+
+`.env` holds machine-local settings and secrets:
+
+| Key | Description |
+| --- | --- |
+| `API_PORT` / `API_KEY` | Port and shared secret for the REST control API |
+| `ENDPOINT_TCP` / `ENDPOINT_UDP` | Server endpoints. Source of truth: they are written into `server.cfg` on every start |
+| `FXSERVER` | Artifact channel: `latest`, `recommended`, or a build number |
+| `USE_TXADMIN` / `TXHOST_TXA_PORT` | Hand process management to txAdmin instead of passing arguments directly |
+| `DISCORD_TOKEN` | Bot token for `kec.discord`, or `disable` |
+
+`config.cfg` holds server convars: `mongodb_url`, `mongodb_max_pool_size`, `mongodb_connect_timeout_ms`, `ENABLE_POPULATION`, `ENTITY_CREATION`.
+
+## Development workflow
+
+Changes under `resources/` are batched with a short debounce, grouped per resource, and applied without restarting FXServer:
+
+| Change | Action |
+| --- | --- |
+| `.ts` under a resource's `src/` | esbuild rebuild (`src/main.ts` → `dist/main.js`), then `ensure <resource>` |
+| `fxmanifest.lua` | `refresh`, then `ensure <resource>` |
+| Any other file | `ensure <resource>` |
+
+A resource is any directory containing an `fxmanifest.lua`; its folder name is its resource name.
+
+### REST API
+
+| Endpoint | Description |
+| --- | --- |
+| `GET /api/status` | Process status |
+| `POST /api/start` | Start FXServer |
+| `POST /api/stop` | Stop FXServer |
+| `POST /api/restart` | Full restart, waits for re-authentication |
+
+Every request requires an `x-api-key` header matching `API_KEY`. The API listens on all interfaces, so keep its port closed at the firewall and use a long random key — it can stop and restart the server.
+
+## Layout
+
+```
+scripts/                        Bun toolchain (builder, updater, REST API, process manager)
+resources/[framework]/kecore/   the framework
+  internal/                     source of truth, loaded by kecore itself
+  performance/                  generated copies injected into consumer resources
+  svelte-src/ → html/           NUI overlay
+  docs/                         API reference
+resources/[framework]/libs/     server-only TypeScript bridge (MongoDB driver, bcrypt)
+resources/[gameplay]/           game resources
+artifacts/                      FXServer build (downloaded)
+```
+
+## Using the framework
+
+A resource opts in from its manifest; no other wiring is required:
+
+```lua
+shared_scripts {
+    '@kecore/init.lua'
+}
+```
+
+Events and RPC:
+
+```lua
+-- server
+kec:on("shop:buy", function(source, itemId)      -- source is prepended on the server
+    kec.log:info("shop", "player %s bought %s", source, itemId)
+    kec:emitClient("shop:bought", source, itemId)
+end)
+
+kec.rpc:register("shop:getStock", function(source, shopId)
+    return { bread = 4 }
+end)
+
+-- client: await yields until the reply arrives, so it runs inside a thread or
+-- an event handler, never at the top level of the file
+kec:on("shop:open", function()
+    local stock = kec.rpc:await("shop:getStock", 5000, "grocery")
+    print(stock and stock.bread)                 -- nil on timeout
+end)
+```
+
+Shared state, replicated across resources on the same side:
+
+```lua
+kec.state:set("weather", "EXTRASUNNY")
+
+kec.state:onChange("weather", function(new, old)
+    print(("weather %s -> %s"):format(old, new))
+end)
+```
+
+Timers, cleaned up automatically when the resource stops:
+
+```lua
+-- a tick stops itself by returning false
+local tick = kec:everyTick(function()
+    if done then return false end
+end)
+
+-- or is cancelled through its handle. setTimeout runs in its own thread and
+-- returns immediately, so the cancel has to happen inside the callback.
+kec:setTimeout(function()
+    tick:cancel()
+end, 2000)
+```
+
+Documents validated against a schema before they reach MongoDB:
+
+```lua
+local Character = kec.mongodb:schema("Character", {
+    collection = "characters",
+    schema = {
+        type = "object",
+        properties = { name = { type = "string" }, cash = { type = "number" } },
+        required = { "name" }
+    },
+    defaults = { cash = 500 }
+})
+
+local id, err = Character:create({ name = "John Doe" })
+local doc = Character:findOne({ name = "John Doe" })
+```
+
+Client side, key bindings and on-screen text:
+
+```lua
+kec.keys:bind({
+    name = "toggleLight",
+    description = "Toggle flashlight",
+    Mapper = "KEYBOARD",
+    Key = "H",
+    keydown = function()
+        kec.label2d:info("Flashlight on", 1500)
+    end
+})
+```
+
+Also available: `kec.zod` for runtime payload validation, `kec.axios` and `kec.http` for outbound requests and in-resource routes, `kec.discord` for bot operations, `kec.lru_cache`, `kec.vehicle`, `kec.raycast`, `kec.label3d`, and the `native` wrapper around local-player natives.
+
+## Framework internals
+
+`internal/` is the single source of truth: kecore loads it through its own manifest and attaches everything to `kec`. `performance/` is generated from `internal/` by `scripts/builder/gen-performance.ts`, and it is what `@kecore/init.lua` injects into each consumer resource — so a call from a consumer resolves against a local table instead of crossing the runtime boundary every time.
+
+`performance/` is never edited by hand. After changing anything under `internal/`, run `bun run gen:performance`; `bun run dev` does it on start. The module list and per-module transform modes live in `scripts/builder/perf-modules.ts`.
+
+## Documentation
+
+- [Core, state and timers](resources/%5Bframework%5D/kecore/docs/CORE_AND_TIMERS.md)
+- [Events and RPC](resources/%5Bframework%5D/kecore/docs/EVENTS_AND_RPC.md)
+- [Client API](resources/%5Bframework%5D/kecore/docs/CLIENT_API.md)
+- [Server API](resources/%5Bframework%5D/kecore/docs/SERVER_API.md)
+
+Hosted documentation: <https://kecore-docs.vercel.app/>
+
+## License
+
+MIT
