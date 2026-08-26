@@ -1,0 +1,53 @@
+// Reset y escala del overlay del framework. Vive fuera de los componentes porque `body` y `*` no
+// existen dentro del árbol de ningún .svelte: el CSS de un componente Svelte está aislado y estos
+// selectores se quedarían sin aplicar.
+//
+// Las tres familias que puede pedir un aviso por su nombre corto (`font = "chalet"`, `"oswald"`,
+// `"pricedown"`). La lista de nombres cortos está en src/fonts.ts; aquí solo se declara el archivo.
+@font-face {
+    font-family: 'Barlow';
+    font-weight: 500;
+    src: url('@fonts/Barlow-Medium.ttf') format('truetype');
+}
+
+@font-face {
+    font-family: 'Chalet London';
+    src: url('@fonts/Chalet-LondonNineteenSixty-Regular.otf') format('opentype');
+}
+
+@font-face {
+    font-family: 'Oswald Regular';
+    src: url('@fonts/Oswald-Regular.ttf') format('truetype');
+}
+
+// La de los rótulos del propio GTA, la misma que usa el dinero del HUD.
+@font-face {
+    font-family: 'Pricedown';
+    src: url('@fonts/Pricedown-Black.otf') format('opentype');
+}
+
+*{
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+// La escala, igual que en el HUD y en interact: la ventana del CEF mide lo que mide el juego, así
+// que un texto en píxeles fijos sale gigante a 720p y en miniatura a 4K. `1rem` sigue a la ALTURA
+// de la pantalla —como el HUD del propio GTA, que no depende del ancho, así que en ultrapanorámica
+// no se descoloca— y vale 10px justos a 1080p: el `size` de un aviso son sus píxeles a 1080p, y se
+// pasa a rem partiéndolo por diez.
+html{
+    font-size: clamp(8px, 0.926vh, 20px);
+}
+
+body{
+    height: 100vh;
+    // La página es TRANSPARENTE y se compone encima del juego.
+    background: transparent;
+    overflow: hidden;
+    // Son avisos: nunca se les hace clic, y esta NUI no coge foco nunca. Sin esto, con el foco
+    // puesto por otro recurso, esta capa se comería los clics de la SPA que sí está abierta.
+    pointer-events: none;
+    user-select: none;
+}

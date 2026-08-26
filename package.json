@@ -9,7 +9,6 @@
   "scripts": {
     "dev": "bun scripts/start.ts",
     "gen:performance": "bun scripts/builder/gen-performance.ts",
-    "test": "bun scripts/test/run-lua-tests.ts",
     "update:latest": "bun scripts/update.ts latest",
     "update:recommended": "bun scripts/update.ts recommended",
     "update": "bun scripts/update.ts recommended",

@@ -109,6 +109,10 @@ class ServerManager {
             this.editConfig('endpoint_add_udp', `"${process.env.ENDPOINT_UDP}"`);
 
             const useTxAdmin = this.isUsingTxAdmin()
+            // OneSync va por argumento y NO en server.cfg: `onesync` es un ConVar interno y
+            // cuando el server llega a ejecutar el cfg ya está fijado, así que allí solo saca
+            // "internal ConVar and cannot be changed". Con txAdmin no se pasan argumentos y
+            // manda su propia opción de OneSync.
             const commonArgs = ['+exec', 'server.cfg', '+set', 'onesync', 'on'];
 
             const spawnArgs = useTxAdmin ? [] : [...commonArgs];

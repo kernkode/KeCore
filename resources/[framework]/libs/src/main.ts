@@ -44,6 +44,31 @@ if (
   }
 }
 
+// --- Sonda de contenedor del driver de Mongo (sandbox de FXServer) ---
+// Al construir el MongoClient, el driver comprueba si existe /.dockerenv para meter
+// "runtime: docker" en la metadata del handshake. Esa ruta está fuera del sandbox de
+// FXServer ("no device found"), así que la lectura se deniega: el driver ya se come el
+// error y sigue con "no estoy en un contenedor", pero la promesa se rechaza antes de que
+// nadie la espere y Node escupe dos páginas de UnhandledPromiseRejection en cada arranque.
+//
+// Aquí se contesta lo MISMO que acababa contestando el sandbox (no accesible) sin llegar a
+// tocar el disco, así que el resultado para el driver no cambia — solo desaparece el ruido.
+// Lo único que se pierde es un campo de telemetría del driver que ya venía vacío. Si algún
+// día este server corre DENTRO de Docker, seguirá diciendo que no: la alternativa es que el
+// sandbox lo deniegue igual y con tres avisos.
+try {
+  const fsp = require("fs").promises;
+  const access = fsp.access.bind(fsp);
+  fsp.access = (path: unknown, ...rest: unknown[]) => {
+    if (path !== "/.dockerenv") return access(path, ...rest);
+    const denied = Promise.reject(new Error("ENOENT: fuera del sandbox de FXServer"));
+    denied.catch(() => {}); // la rejection ya tiene dueño; el driver la vuelve a capturar
+    return denied;
+  };
+} catch {
+  console.warn("⚠️ [MongoDB] No se pudo silenciar la sonda de contenedor del driver.");
+}
+
 // --- Configuración (Cacheada al inicio) ---
 // Leer las Convars una sola vez al iniciar el script ahorra CPU
 const CONFIG = {

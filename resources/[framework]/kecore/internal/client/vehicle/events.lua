@@ -245,11 +245,50 @@ AddStateBagChangeHandler(state.DIRT, nil, function(bagName, key, value, _unused,
 end)
 
 -- update state bag on taking damage
+--
+-- Los statebags NO deduplican: escribir el mismo payload en cada bala lo replica por red
+-- otra vez y re-dispara estos mismos handlers en TODOS los clientes cercanos (el de TYRES
+-- reaplicaba ruedas ya reventadas, ver su handler). Se compara contra la última foto
+-- escrita y solo se publica lo que cambió.
+local lastSynced = {} -- entity -> { [stateKey] = última tabla escrita }
+
+local function syncChanged(entity, key, value)
+	local entry = lastSynced[entity]
+	if entry == nil then
+		entry = {}
+		lastSynced[entity] = entry
+	end
+
+	local before = entry[key]
+	if type(before) == "table" and type(value) == "table" then
+		local same = true
+		for k, v in pairs(before) do
+			if value[k] ~= v then same = false; break end
+		end
+		if same then
+			for k in pairs(value) do
+				if before[k] == nil then same = false; break end
+			end
+		end
+		if same then return false end
+	elseif before == value then
+		return false
+	end
+
+	entry[key] = value
+	return true
+end
+
 AddEventHandler("gameEventTriggered", function (name, args)
 	if (name ~= "CEventNetworkEntityDamage") then return end
 
 	local entity = args[1]
 	if not IsEntityAVehicle(entity) then return end
+
+	if not DoesEntityExist(entity) then
+		lastSynced[entity] = nil
+		return
+	end
 
     if not IsVehicleBlacklisted(entity) then
         deformation:handleDeformationUpdate(entity)
@@ -258,11 +297,26 @@ AddEventHandler("gameEventTriggered", function (name, args)
     local vehicle = kec.vehicle:get(entity)
 
     local doors = vehicle:getDoorsBroken()
-    Entity(entity).state:set(state.BROKEN_DOORS, doors, true)
+    if syncChanged(entity, state.BROKEN_DOORS, doors) then
+        Entity(entity).state:set(state.BROKEN_DOORS, doors, true)
+    end
 
     local tyres = vehicle:getTyresBurst()
-    vehicle:setStreamSyncedMeta(state.TYRES, tyres, true)
+    if syncChanged(entity, state.TYRES, tyres) then
+        vehicle:setStreamSyncedMeta(state.TYRES, tyres, true)
+    end
 
     local windows = vehicle:getWindowsBroken()
-    Entity(entity).state:set(state.BROKEN_WINDOWS, windows, true)
+    if syncChanged(entity, state.BROKEN_WINDOWS, windows) then
+        Entity(entity).state:set(state.BROKEN_WINDOWS, windows, true)
+    end
 end)
+
+-- Barrido de la caché de fotos: entidades borradas no deben dejar entradas colgando.
+kec:setInterval(function()
+	for entity in pairs(lastSynced) do
+		if not DoesEntityExist(entity) then
+			lastSynced[entity] = nil
+		end
+	end
+end, 30 * 1000)

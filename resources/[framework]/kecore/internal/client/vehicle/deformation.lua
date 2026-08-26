@@ -45,9 +45,11 @@ end
 
 function deformation:applyDeformation(vehicle, deformData)
 	if (not DoesEntityExist(vehicle)) then
+		-- Se espera a la CREACIÓN de la entidad de red: no hace falta sondearla a 60 Hz,
+		-- la propia replicación del statebag tarda más que estos 50 ms.
 		local endTime = GetGameTimer() + 5000
 		while (not DoesEntityExist(vehicle) and GetGameTimer() < endTime) do
-			Wait(0)
+			Wait(50)
 		end
 
 		if (not DoesEntityExist(vehicle)) then
@@ -221,25 +223,26 @@ function LogDebug(text, ...)
 	end
 end
 
-local damageUpdate = {}
+-- Debounce por vehículo: la foto de la deformación se toma 1 s después del ÚLTIMO impacto.
+-- Antes cada impacto abría un hilo girando en Wait(0) hasta un segundo entero; una ráfaga
+-- eran varios hilos quemando el scheduler a 60 Hz, todo facturado a este recurso.
+local DAMAGE_DEBOUNCE_MS <const> = 1000
+local damageTimers = {}
+
 function deformation:handleDeformationUpdate(vehicle)
-	if (damageUpdate[vehicle]) then
-		damageUpdate[vehicle] = GetGameTimer() + 1000
-		return
+	local pending = damageTimers[vehicle]
+	if pending then
+		pending:cancel()
 	end
 
-	damageUpdate[vehicle] = GetGameTimer() + 1000
+	damageTimers[vehicle] = kec:setTimeout(function()
+		damageTimers[vehicle] = nil
 
-	while (damageUpdate[vehicle] > GetGameTimer()) do
-		Wait(0)
-	end
+		if (not DoesEntityExist(vehicle) or NetworkGetEntityOwner(vehicle) ~= PlayerId()) then return end
 
-	damageUpdate[vehicle] = nil
-
-	if (not DoesEntityExist(vehicle) or NetworkGetEntityOwner(vehicle) ~= PlayerId()) then return end
-
-	local deformData = GetVehicleDeformation(vehicle)
-	if (deformData and #deformData > 0) then
-		Entity(vehicle).state:set(kec.vehicle.state.DEFORMATION, deformData, true)
-	end
+		local deformData = GetVehicleDeformation(vehicle)
+		if (deformData and #deformData > 0) then
+			Entity(vehicle).state:set(kec.vehicle.state.DEFORMATION, deformData, true)
+		end
+	end, DAMAGE_DEBOUNCE_MS)
 end

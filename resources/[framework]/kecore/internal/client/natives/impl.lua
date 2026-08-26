@@ -58,7 +58,10 @@ function native:spawn(coords, heading, modelHash)
 
     -- Limpieza de estado (se ejecuta tanto para resurrección como para spawn vivo)
     ClearPedTasksImmediately(newPed)
-    ClearPlayerWantedLevel(newPed)
+
+    -- Por índice de JUGADOR, no por ped: con un ped el native se traga la llamada y el
+    -- jugador reaparecía con la estrella de la policía puesta.
+    ClearPlayerWantedLevel(player)
 
     SetEntityVelocity(newPed, 0.0, 0.0, 0.0)
     self:setHealth(self:getMaxHealth())
@@ -111,10 +114,12 @@ end
 --
 --   700 barra llena · 601 un punto de vida · 600 muerto · 200..101 el colchón ya gastado
 --
--- Así el remate deja al ped en 200: su barra real INTACTA, solo sin colchón. Ahí abajo no lo
--- puede dejar nada más —el daño normal no llega a quitar 100 y lo gordo (explosión, ráfaga de
--- perdigones) se pasa de largo y cae en el suelo—, así que esa vida es la firma del remate y
--- el tick le devuelve los 500.
+-- Así el remate deja al ped en 200: su barra real INTACTA, solo sin colchón. Pero la vida a la
+-- que cae NO es la firma de nada: una GRANADA a los pies quita también 500 justos y deja al ped
+-- exactamente ahí. Por eso el colchón se devuelve solo si el golpe fue de MELÉ
+-- (`HasPedBeenDamagedByWeapon` con weaponType 1, que es el tipo de daño del culatazo aunque el
+-- arma en la mano sea de fuego). Mirando solo dónde cae la vida, una explosión encima no hacía
+-- NADA: caía en la franja, se le devolvían los 500 en el mismo frame y salía con la barra llena.
 --
 -- El precio de subir el máximo lo paga el mismo tick: el motor mata a los 100 ABSOLUTOS, así
 -- que con 700 de máximo un jugador aguantaría 600 de daño en vez de 100 y la tabla de daño del
@@ -143,9 +148,41 @@ local knockoutPeds = {}    -- ped con colchón → true
 local tickKnockout = nil
 local knockoutBroken = false -- true si el motor no deja montar el colchón: se apaga y no se reintenta
 
---- Una pasada de colchón sobre un ped: monta lo que falte, le devuelve el remate si se lo
---- acaba de comer, y lo remata si su barra real llegó a 0. Idempotente a propósito: vale
---- igual para armarlo y para mantenerlo cada frame.
+-- Olvidar el último golpe recibido. El flag de "me han dado con X" del motor es ACUMULATIVO
+-- hasta que se limpia, y el colchón lo consulta para saber si el golpe de ESTE frame fue de
+-- melé: sin limpiarlo, un puñetazo de hace diez minutos haría pasar por culatazo a la siguiente
+-- explosión. Se captura una vez porque no está en todas las builds; si falta, el colchón vuelve
+-- a fiarse solo de la vida (y una explosión de 500 justos no hará daño, ver la cabecera).
+local clearLastDamage = ClearEntityLastWeaponDamage
+
+--- Sube la vida los 500 del colchón, y comprueba que la subida HAYA ENTRADO: es de lo que
+--- depende todo esto. Si el motor no deja pasar de la barra de fábrica del ped, la subida lo
+--- deja con la barra LLENA en vez de con colchón, y a partir de ahí cada golpe cae otra vez en
+--- la franja, se devuelve, y el ped no baja nunca de ahí: inmortal, y sin una línea en consola
+--- que lo diga. Antes que eso, sin colchón y avisando.
+local function fillBuffer(ped, health)
+    SetEntityHealth(ped, health + KNOCKOUT)
+    if GetEntityHealth(ped) >= health + KNOCKOUT then return end
+
+    knockoutBroken = true
+    kec.log:warn("knockout", ("el motor no deja subir la vida de %d a %d (máximo %d): " ..
+        "sin colchón, el culatazo vuelve a matar de una")
+        :format(health, health + KNOCKOUT, GetPedMaxHealth(ped)))
+
+    for buffered in pairs(knockoutPeds) do
+        knockoutPeds[buffered] = nil
+        if DoesEntityExist(buffered) then SetPedMaxHealth(buffered, VANILLA_MAX) end
+    end
+
+    if tickKnockout then
+        tickKnockout:cancel()
+        tickKnockout = nil
+    end
+end
+
+--- Una pasada de colchón sobre un ped: lo monta si falta, le devuelve el remate si se lo acaba
+--- de comer, y lo remata si su barra real llegó a 0. Idempotente a propósito: vale igual para
+--- armarlo y para mantenerlo cada frame.
 local function knockoutPass(ped)
     if not DoesEntityExist(ped) then
         knockoutPeds[ped] = nil
@@ -156,69 +193,73 @@ local function knockoutPass(ped)
     -- resucitarlo por la puerta de atrás.
     if IsEntityDead(ped) then return end
 
-    -- El ped sale del respawn (y del cambio de modelo) con el máximo de fábrica: sin esto el
-    -- colchón se pierde al reaparecer y el siguiente culatazo vuelve a matar de una.
+    -- MONTAR. El ped sale del respawn (y del cambio de modelo) con el máximo de fábrica, así que
+    -- esta rama es también la que lo repone. Subir el techo y rellenar los 500 van JUNTOS y en
+    -- la misma pasada: con el máximo a 700 y la barra de fábrica a 200, el ped se queda por
+    -- debajo del suelo de muerte y el mantenimiento de abajo lo remataría acto seguido.
     -- Y con las natives de PED, no las de entidad: `SetEntityMaxHealth` no sube el techo real
-    -- del ped —la vida se queda clavada en su máximo de fábrica y la devolución no entra (es lo
-    -- que pilló el guard de abajo)—, mientras que `SetPedMaxHealth` sí. Es la misma native con
-    -- la que se arregla que la hembra freemode ande con 175 en vez de 200.
-    if GetPedMaxHealth(ped) ~= BUFFERED_MAX then SetPedMaxHealth(ped, BUFFERED_MAX) end
+    -- del ped —la vida se queda clavada en su máximo de fábrica y la subida no entra (es lo que
+    -- pilló el guard de `fillBuffer`)—, mientras que `SetPedMaxHealth` sí. Es la misma native
+    -- con la que se arregla que la hembra freemode ande con 175 en vez de 200.
+    if GetPedMaxHealth(ped) ~= BUFFERED_MAX then
+        SetPedMaxHealth(ped, BUFFERED_MAX)
 
+        local vanilla = GetEntityHealth(ped)
+        if vanilla > FATAL and vanilla <= VANILLA_MAX then fillBuffer(ped, vanilla) end
+
+        return
+    end
+
+    -- MANTENER.
     local health = GetEntityHealth(ped)
 
-    if health > FATAL and health <= VANILLA_MAX then
-        -- ponytail: se mira DÓNDE cae la vida, no de qué arma viene, porque solo el remate
-        -- (500 fijos) la deja en la barra real sin colchón. Si algún día una explosión o una
-        -- caída de entre 400 y 600 deja a alguien vivo, hay que mirar el impacto
-        -- (`HasPedBeenDamagedByWeapon` con melé) antes de devolver nada.
-        SetEntityHealth(ped, health + KNOCKOUT)
+    -- ¿El golpe que acaba de entrar fue de MELÉ? Se lee ANTES de decidir nada y se olvida en la
+    -- misma pasada, así que lo que se mira es siempre el golpe de ESTE frame.
+    local melee = HasPedBeenDamagedByWeapon(ped, 0, 1) -- weaponType 1 = daño de melé
+    if clearLastDamage then clearLastDamage(ped) end
 
-        -- Y se comprueba que la devolución HAYA ENTRADO, que es de lo que depende todo esto. Si
-        -- el motor no deja pasar de la barra de fábrica del ped, la devolución lo deja con la
-        -- barra LLENA en vez de con colchón: a partir de ahí cada golpe cae otra vez en la
-        -- franja, se devuelve, y el ped no baja nunca de ahí. Inmortal, y sin una línea en
-        -- consola que lo diga. Antes que eso, sin colchón y avisando.
-        if GetEntityHealth(ped) < health + KNOCKOUT then
-            knockoutBroken = true
-            kec.log:warn("knockout", ("el motor no deja subir la vida de %d a %d (máximo %d): " ..
-                "sin colchón, el culatazo vuelve a matar de una")
-                :format(health, health + KNOCKOUT, GetPedMaxHealth(ped)))
-
-            for buffered in pairs(knockoutPeds) do
-                knockoutPeds[buffered] = nil
-                if DoesEntityExist(buffered) then SetPedMaxHealth(buffered, VANILLA_MAX) end
-            end
-
-            if tickKnockout then
-                tickKnockout:cancel()
-                tickKnockout = nil
-            end
-        end
-    elseif health <= DEATH_FLOOR then
-        SetEntityHealth(ped, 0)
-
-        -- Solo el jugador local: de un NPC con colchón no hay muerte que reportar.
-        if ped ~= PlayerPedId() then return end
-
-        local killer = GetPedSourceOfDeath(ped)
-        local _, bone = GetPedLastDamageBone(ped)
-
-        -- Mismos campos que la muerte de `client/events/custom.lua`, con lo que se puede
-        -- saber sin el evento del motor: los golpes y el daño acumulado los lleva ese
-        -- contador y aquí no hay ninguno.
-        local data = {
-            weaponHash = GetPedCauseOfDeath(ped),
-            bone = bone,
-            isHeadshot = false,
-            hits = 0,
-            total_damage = 0,
-            killer = (killer ~= 0 and IsPedAPlayer(killer))
-                and GetPlayerServerId(NetworkGetPlayerIndexFromPed(killer)) or 0
-        }
-
-        kec:emitServer("kec:onPlayerDeath", data)
-        kec:emit("kec:onPlayerDeath", data)
+    -- La vida cayó en la franja del colchón gastado Y fue un golpe: es el remate del culatazo, y
+    -- se le devuelven los 500. Sin la condición del melé aquí entraba también una granada a los
+    -- pies —quita 500 justos, los mismos— y la explosión acababa sin hacer NADA.
+    --
+    -- Si algún día el culatazo vuelve a matar de una, el sitio es ESTA línea: querría decir que
+    -- el motor no marca ese golpe como melé y hay que buscarle otra firma. Se comprueba con
+    -- `/dummy` y un arma de fuego en la mano (culatazo: no debe matar de un golpe; granada a los
+    -- pies: debe matar).
+    if melee and health > FATAL and health <= VANILLA_MAX then
+        fillBuffer(ped, health)
+        return
     end
+
+    -- Por encima del suelo del colchón no hay nada que hacer: es daño normal y la barra real
+    -- (601..700) todavía tiene puntos.
+    if health > DEATH_FLOOR then return end
+
+    -- La barra real llegó a 0: o se la comió el daño de verdad, o fue un impacto tan gordo que
+    -- se pasó de largo del colchón (una explosión, una ráfaga de perdigones). Muerto.
+    SetEntityHealth(ped, 0)
+
+    -- Solo el jugador local: de un NPC con colchón no hay muerte que reportar.
+    if ped ~= PlayerPedId() then return end
+
+    local killer = GetPedSourceOfDeath(ped)
+    local _, bone = GetPedLastDamageBone(ped)
+
+    -- Mismos campos que la muerte de `client/events/custom.lua`, con lo que se puede
+    -- saber sin el evento del motor: los golpes y el daño acumulado los lleva ese
+    -- contador y aquí no hay ninguno.
+    local data = {
+        weaponHash = GetPedCauseOfDeath(ped),
+        bone = bone,
+        isHeadshot = false,
+        hits = 0,
+        total_damage = 0,
+        killer = (killer ~= 0 and IsPedAPlayer(killer))
+            and GetPlayerServerId(NetworkGetPlayerIndexFromPed(killer)) or 0
+    }
+
+    kec:emitServer("kec:onPlayerDeath", data)
+    kec:emit("kec:onPlayerDeath", data)
 end
 
 --- Quita el remate de melé (el culatazo) de un ped poniéndole 500 de vida de colchón por
@@ -334,6 +375,52 @@ end
 
 function native:releaseModel(modelHash)
     return SetModelAsNoLongerNeeded(modelHash)
+end
+
+--- Carga un modelo en memoria esperando con timeout
+---@param modelHash number|string
+---@param timeoutMs number|nil Tiempo máximo en ms (por defecto 3000)
+---@return boolean success
+function native:loadModel(modelHash, timeoutMs)
+    if type(modelHash) == "string" then modelHash = kec:hash(modelHash) end
+    if not self:isModelInCdimage(modelHash) then return false end
+
+    self:requestModel(modelHash)
+    local deadline = GetGameTimer() + (timeoutMs or 3000)
+    while not self:hasModelLoaded(modelHash) and GetGameTimer() < deadline do
+        Citizen.Wait(10)
+    end
+    return self:hasModelLoaded(modelHash)
+end
+
+function native:requestWeaponAsset(weaponHash, p1, extraComponentFlags)
+    p1 = p1 or 31
+    extraComponentFlags = extraComponentFlags or 0
+    return RequestWeaponAsset(weaponHash, p1, extraComponentFlags)
+end
+
+function native:hasWeaponAssetLoaded(weaponHash)
+    return HasWeaponAssetLoaded(weaponHash)
+end
+
+function native:removeWeaponAsset(weaponHash)
+    return RemoveWeaponAsset(weaponHash)
+end
+
+--- Carga un asset de arma en memoria esperando con timeout
+---@param weaponHash number|string
+---@param timeoutMs number|nil Tiempo máximo en ms (por defecto 3000)
+---@param extraComponentFlags number|nil Flags de componentes (por defecto 0)
+---@return boolean success
+function native:loadWeaponAsset(weaponHash, timeoutMs, extraComponentFlags)
+    if type(weaponHash) == "string" then weaponHash = kec:hash(weaponHash) end
+
+    self:requestWeaponAsset(weaponHash, 31, extraComponentFlags or 0)
+    local deadline = GetGameTimer() + (timeoutMs or 3000)
+    while not self:hasWeaponAssetLoaded(weaponHash) and GetGameTimer() < deadline do
+        Citizen.Wait(10)
+    end
+    return self:hasWeaponAssetLoaded(weaponHash)
 end
 
 function native:setModel(modelHash)
@@ -545,4 +632,18 @@ end
 
 function native:isAimCamActive()
     return IsAimCamActive()
+end
+
+function native:hideHudComponents(components)
+    if type(components) == "table" then
+        for i = 1, #components do
+            HideHudComponentThisFrame(components[i])
+        end
+    else
+        HideHudComponentThisFrame(components)
+    end
+end
+
+function native:displayRadar(toggle)
+    DisplayRadar(toggle)
 end

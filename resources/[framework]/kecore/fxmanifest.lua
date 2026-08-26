@@ -57,13 +57,14 @@ client_scripts {
 
     'internal/client/natives/impl.lua',
     'internal/client/natives/scaleform.lua',
+    'internal/client/player.lua',
 
     'internal/client/world.lua',
     'internal/client/raycast.lua',
     'internal/client/cam.lua',
     'internal/client/keys.lua',
     'internal/client/label3d.lua',
-    'internal/client/label2d.lua',
+    'internal/client/label2d_nui.lua',
 
     'internal/client/controls/header.lua',
     'internal/client/controls/impl.lua',
@@ -84,7 +85,13 @@ client_scripts {
     'internal/client/gizmo/keys.lua',
 }
 
+-- El overlay del framework (los avisos de kec.label2d). El CEF es de kecore porque el
+-- módulo se inyecta en todos los recursos y SendNUIMessage solo llega al CEF de quien lo
+-- llama: ver internal/client/label2d_nui.lua. Nunca coge foco.
+ui_page 'html/index.html'
+
 files {
     "init.lua",
-    "performance/**.lua"
+    "performance/**.lua",
+    "html/**"
 }
