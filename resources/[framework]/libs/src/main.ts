@@ -6,6 +6,7 @@ import {
   MongoClientOptions,
   Collection,
   UpdateResult,
+  BulkWriteResult,
 } from "mongodb";
 
 exports("bcrypt_js", () => {
@@ -165,6 +166,37 @@ function normalizeFilter(root: any): any {
   return toDates(walk(fixEmptyTable(root)));
 }
 
+/**
+ * Normaliza las operaciones de bulkWrite. Cada op es `{ nombreOp: { ... } }`:
+ * dentro, `filter` se normaliza como filtro (ObjectId bajo `_id`) y el resto
+ * (`document`, `update`, `replacement`, `arrayFilters`…) como documento
+ * ($date → Date). Los flags escalares (`upsert`) pasan tal cual.
+ */
+function normalizeBulkOps(ops: any): any[] {
+  if (!Array.isArray(ops)) return [];
+
+  return ops.map((op) => {
+    if (!op || typeof op !== "object") return op;
+
+    const out: any = {};
+    for (const name in op) {
+      const spec = op[name];
+      if (!spec || typeof spec !== "object") {
+        out[name] = spec;
+        continue;
+      }
+
+      const model: any = {};
+      for (const key in spec) {
+        model[key] =
+          key === "filter" ? normalizeFilter(spec[key]) : normalizeDoc(spec[key]);
+      }
+      out[name] = model;
+    }
+    return out;
+  });
+}
+
 // --- Singleton de Conexión ---
 class MongoService {
   private static instance: MongoService;
@@ -269,6 +301,29 @@ function updateSummary(res: UpdateResult) {
   };
 }
 
+/** _ids generados por el bulk → hex, con el índice de la op como clave. */
+function hexIdMap(ids: { [index: number]: any }) {
+  const out: Record<string, string> = {};
+  for (const index in ids) {
+    const id = ids[index];
+    out[index] = id instanceof ObjectId ? id.toHexString() : String(id);
+  }
+  return out;
+}
+
+/** Forma de retorno de bulkWrite: contadores + los _id que generó Mongo. */
+function bulkSummary(res: BulkWriteResult) {
+  return {
+    inserted: res.insertedCount,
+    matched: res.matchedCount,
+    modified: res.modifiedCount,
+    deleted: res.deletedCount,
+    upserted: res.upsertedCount,
+    insertedIds: hexIdMap(res.insertedIds),
+    upsertedIds: hexIdMap(res.upsertedIds),
+  };
+}
+
 // --- EXPORTS ---
 
 // Inicialización explícita (Opcional, pero recomendada al iniciar el recurso)
@@ -348,6 +403,18 @@ exports("updateMany", (col: string, filter: any, update: any, options?: any) => 
       fixEmptyTable(options),
     );
     return updateSummary(res);
+  });
+});
+
+// Varias escrituras en un solo viaje (y un solo comando contra mongod). Ojo con
+// los fallos parciales: el driver lanza si alguna op falla, así que el envelope
+// sale { ok: false } y se pierden los contadores — con `ordered: true` (default)
+// las ops anteriores ya están escritas, y con `ordered: false` todas menos la
+// que falló. Reintentar solo es seguro si las ops son idempotentes.
+exports("bulkWrite", (col: string, ops: any[], options?: any) => {
+  return execute(col, async (c) => {
+    const res = await c.bulkWrite(normalizeBulkOps(ops), fixEmptyTable(options));
+    return bulkSummary(res);
   });
 });
 

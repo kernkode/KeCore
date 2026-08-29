@@ -231,6 +231,26 @@ function kec.mongodb:collection(collectionName)
         return decode(bridge:findOneAndReplace(self.collection, self.filter, replacement, options or {}))
     end
 
+    --- Varias escrituras en un solo viaje al bridge (y un solo comando contra
+    --- mongod). Cada op es una tabla con UNA clave, con la forma del driver:
+    ---   { insertOne  = { document = doc } }
+    ---   { updateOne  = { filter = f, update = { ["$set"] = d }, upsert = true } }
+    ---   { updateMany = { filter = f, update = u } }
+    ---   { replaceOne = { filter = f, replacement = doc } }
+    ---   { deleteOne  = { filter = f } }  { deleteMany = { filter = f } }
+    --- options: { ordered = false } para no parar en el primer fallo.
+    --- OJO: si una op falla devuelve (nil, err) y se pierden los contadores,
+    --- pero las escrituras que ya pasaron NO se deshacen (no hay transacción):
+    --- reintentar solo es seguro si las ops son idempotentes.
+    ---@return table|nil result { inserted, matched, modified, deleted, upserted, insertedIds, upsertedIds }
+    ---@return string|nil err
+    function query:bulkWrite(ops, options)
+        if type(ops) ~= "table" or #ops == 0 then
+            error("bulkWrite: falta el array de operaciones")
+        end
+        return decode(bridge:bulkWrite(self.collection, ops, options or {}))
+    end
+
     -- INDEXES ----------------------------------------------------------------
 
     --- Crea un índice y devuelve su nombre. Para TTL:
@@ -305,6 +325,7 @@ local function buildModel(name, definition)
     function model:deleteOne(filter) return self:collection():deleteOne(filter) end
     function model:deleteMany(filter) return self:collection():deleteMany(filter) end
     function model:findOneAndUpdate(filter, update, options) return self:collection():findOneAndUpdate(filter, update, options) end
+    function model:bulkWrite(ops, options) return self:collection():bulkWrite(ops, options) end
     function model:aggregate(pipeline) return self:collection():aggregate(pipeline) end
 
     return model

@@ -9295,7 +9295,7 @@
         }
       };
       exports2.Batch = Batch;
-      var BulkWriteResult = class _BulkWriteResult {
+      var BulkWriteResult2 = class _BulkWriteResult {
         static generateIdMap(ids) {
           const idMap = {};
           for (const doc of ids) {
@@ -9382,7 +9382,7 @@
           return this.result.ok === 1;
         }
       };
-      exports2.BulkWriteResult = BulkWriteResult;
+      exports2.BulkWriteResult = BulkWriteResult2;
       var WriteConcernError = class {
         constructor(error) {
           this.serverError = error;
@@ -9512,7 +9512,7 @@
       }
       async function executeCommands(bulkOperation, options) {
         if (bulkOperation.s.batches.length === 0) {
-          return new BulkWriteResult(bulkOperation.s.bulkResult, bulkOperation.isOrdered);
+          return new BulkWriteResult2(bulkOperation.s.bulkResult, bulkOperation.isOrdered);
         }
         for (const batch of bulkOperation.s.batches) {
           const finalOptions = (0, utils_1.resolveOptions)(bulkOperation, {
@@ -9549,21 +9549,21 @@
           if (thrownError != null) {
             if (thrownError instanceof error_1.MongoWriteConcernError) {
               mergeBatchResults(batch, bulkOperation.s.bulkResult, thrownError, result);
-              const writeResult3 = new BulkWriteResult(bulkOperation.s.bulkResult, bulkOperation.isOrdered);
+              const writeResult3 = new BulkWriteResult2(bulkOperation.s.bulkResult, bulkOperation.isOrdered);
               throw new MongoBulkWriteError({
                 message: thrownError.result.writeConcernError.errmsg,
                 code: thrownError.result.writeConcernError.code
               }, writeResult3);
             } else {
-              throw new MongoBulkWriteError(thrownError, new BulkWriteResult(bulkOperation.s.bulkResult, bulkOperation.isOrdered));
+              throw new MongoBulkWriteError(thrownError, new BulkWriteResult2(bulkOperation.s.bulkResult, bulkOperation.isOrdered));
             }
           }
           mergeBatchResults(batch, bulkOperation.s.bulkResult, thrownError, result);
-          const writeResult2 = new BulkWriteResult(bulkOperation.s.bulkResult, bulkOperation.isOrdered);
+          const writeResult2 = new BulkWriteResult2(bulkOperation.s.bulkResult, bulkOperation.isOrdered);
           bulkOperation.handleWriteError(writeResult2);
         }
         bulkOperation.s.batches.length = 0;
-        const writeResult = new BulkWriteResult(bulkOperation.s.bulkResult, bulkOperation.isOrdered);
+        const writeResult = new BulkWriteResult2(bulkOperation.s.bulkResult, bulkOperation.isOrdered);
         bulkOperation.handleWriteError(writeResult);
         return writeResult;
       }
@@ -49226,6 +49226,26 @@ Content-Type: ${partContentType}\r
     };
     return toDates(walk(fixEmptyTable(root)));
   }
+  function normalizeBulkOps(ops) {
+    if (!Array.isArray(ops)) return [];
+    return ops.map((op) => {
+      if (!op || typeof op !== "object") return op;
+      const out = {};
+      for (const name in op) {
+        const spec = op[name];
+        if (!spec || typeof spec !== "object") {
+          out[name] = spec;
+          continue;
+        }
+        const model = {};
+        for (const key in spec) {
+          model[key] = key === "filter" ? normalizeFilter(spec[key]) : normalizeDoc(spec[key]);
+        }
+        out[name] = model;
+      }
+      return out;
+    });
+  }
   var MongoService = class _MongoService {
     constructor() {
       this.db = null;
@@ -49299,6 +49319,25 @@ Content-Type: ${partContentType}\r
       upserted: res.upsertedId ? res.upsertedId.toHexString() : void 0
     };
   }
+  function hexIdMap(ids) {
+    const out = {};
+    for (const index in ids) {
+      const id = ids[index];
+      out[index] = id instanceof import_mongodb.ObjectId ? id.toHexString() : String(id);
+    }
+    return out;
+  }
+  function bulkSummary(res) {
+    return {
+      inserted: res.insertedCount,
+      matched: res.matchedCount,
+      modified: res.modifiedCount,
+      deleted: res.deletedCount,
+      upserted: res.upsertedCount,
+      insertedIds: hexIdMap(res.insertedIds),
+      upsertedIds: hexIdMap(res.upsertedIds)
+    };
+  }
   exports("connect", async (dbName) => {
     try {
       await MongoService.getInstance().getDb(dbName);
@@ -49364,6 +49403,12 @@ Content-Type: ${partContentType}\r
         fixEmptyTable(options)
       );
       return updateSummary(res);
+    });
+  });
+  exports("bulkWrite", (col, ops, options) => {
+    return execute(col, async (c) => {
+      const res = await c.bulkWrite(normalizeBulkOps(ops), fixEmptyTable(options));
+      return bulkSummary(res);
     });
   });
   exports("aggregate", (col, pipeline2) => {
