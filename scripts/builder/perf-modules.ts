@@ -48,6 +48,8 @@ export const PERF_MODULES: PerfModule[] = [
     // client/label2d_nui.lua NO se transpila a propósito: el ui_page es de kecore y
     // SendNUIMessage solo llega al CEF de quien lo llama, así que el módulo tiene que vivir
     // una sola vez (allí) y los consumidores llegan por su export, que envuelve init.lua.
+    // client/audio_nui.lua tampoco, por lo mismo: el AudioContext y los <audio> viven en ese
+    // mismo CEF.
     { out: 'client/scaleform.lua', src: 'client/natives/scaleform.lua', name: 'scaleform', mode: 'namespaced' },
     { out: 'client/natives.lua',   src: 'client/natives/impl.lua',     name: 'native',    mode: 'native'     },
     { out: 'client/player.lua',    src: 'client/player.lua',           name: 'player',    mode: 'namespaced' },
@@ -73,6 +75,8 @@ export const PERF_MODULES: PerfModule[] = [
     { out: 'server/discord.lua',   src: 'server/libs/discord.lua', name: 'discord', mode: 'namespaced' },
     // mongodb_registry.lua NO se transpila a propósito: el registro de schemas
     // debe vivir una sola vez (en kecore) y los consumidores llegan por refs.
+    // server/audio.lua tampoco: el registro de emisores (con el reloj de cada uno) tiene que ser
+    // único o nadie sabría por qué segundo va la música de los demás.
     { out: 'server/mongodb.lua',   src: 'server/libs/mongodb.lua', name: 'mongodb', mode: 'namespaced' },
     { out: 'server/events.lua',    src: 'server/events.lua',        name: 'events',  mode: 'flat'       },
     {

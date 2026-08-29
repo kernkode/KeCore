@@ -1,6 +1,7 @@
 import chalk from 'chalk';
 import { log } from './core/logger.ts';
 import { startRestAPI } from './core/api.ts';
+import { startAudioAPI } from './core/audio.ts';
 import { buildManager } from './builder/build-manager.ts';
 import { generatePerformance } from './builder/gen-performance.ts';
 import { watcher } from './builder/watcher.ts';
@@ -71,6 +72,7 @@ async function main(): Promise<void> {
         await buildManager.runInitialBuilds();
         await serverManager.start();
         await startRestAPI();
+        await startAudioAPI();
         watcher.start();
 
         // Permitir entrada de comandos a la consola del servidor

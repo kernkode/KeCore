@@ -16,6 +16,13 @@ export const API_CONFIG: ApiConfig = {
   apiKey: process.env.API_KEY, // La clave ahora viene del entorno
 };
 
+// El relay de audio (scripts/core/audio.ts) escucha en SU puerto y no en el del API de control:
+// este tiene que estar abierto a los jugadores para que sus CEF puedan tirar del stream, y el de
+// control (con /api/stop y /api/restart) no debería salir de la máquina.
+export const AUDIO_CONFIG = {
+  port: parseInt(process.env.AUDIO_PORT || "30122"),
+};
+
 import type { BuildOptions } from "esbuild";
 
 export const ESBUILD_OPTIONS: BuildOptions = {

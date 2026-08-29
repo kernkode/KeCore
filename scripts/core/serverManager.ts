@@ -5,7 +5,7 @@ import chalk from 'chalk';
 import { spawn, ChildProcess, exec } from 'child_process';
 import { LRUCache } from 'lru-cache';
 import { log, writeToLog, clearLogFile } from './logger.ts';
-import { CWD, FXSERVER_EXECUTABLE } from './configs.ts';
+import { CWD, FXSERVER_EXECUTABLE, AUDIO_CONFIG } from './configs.ts';
 import net from 'net';
 
 // Definir interfaces para los contextos de esbuild
@@ -113,7 +113,18 @@ class ServerManager {
             // cuando el server llega a ejecutar el cfg ya está fijado, así que allí solo saca
             // "internal ConVar and cannot be changed". Con txAdmin no se pasan argumentos y
             // manda su propia opción de OneSync.
-            const commonArgs = ['+exec', 'server.cfg', '+set', 'onesync', 'on'];
+            const commonArgs = [
+                '+exec', 'server.cfg',
+                '+set', 'onesync', 'on',
+                // El relay de audio (scripts/core/audio.ts) por argumento y no en server.cfg: la
+                // clave vive SOLO en el .env y así no hay que copiarla a un cfg que va a git.
+                // `audio_public_url` no se pasa a propósito — la IP por la que llegan los
+                // jugadores no la sabe el devkit; sin ella se usa la interna, que vale para
+                // probar en local. Con txAdmin no se pasan argumentos: ahí van los tres `set` a
+                // mano en server.cfg.
+                '+set', 'audio_api_url', `http://127.0.0.1:${AUDIO_CONFIG.port}`,
+                '+set', 'audio_api_key', process.env.API_KEY || ''
+            ];
 
             const spawnArgs = useTxAdmin ? [] : [...commonArgs];
 

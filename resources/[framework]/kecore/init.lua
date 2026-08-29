@@ -31,6 +31,35 @@ local chunks = {
 local context = IsDuplicityVersion() and "server" or "client"
 local name_resource = "kecore"
 
+-- Hay módulos de kecore que NO se inyectan como los demás porque tienen que vivir una sola vez:
+-- el que pinta o el que suena es el CEF de kecore, y SendNUIMessage solo habla con el del recurso
+-- que la llama; y un registro compartido (los emisores de audio del servidor) deja de tener
+-- sentido si cada recurso lleva su copia. A esos se llega por su export, y aquí se rearma la tabla
+-- con los mismos métodos para que las llamadas no cambien.
+--
+-- Se pisa lo que venga en `get()`: esa copia trae los métodos como funcref y llamarlos con `:`
+-- mandaría la tabla del CONSUMIDOR como self. Se pisa a propósito para que haya un solo salto y
+-- sea siempre el mismo.
+--
+-- La lista va explícita (y no un __index que fabrique cualquier método) porque hay quien pregunta
+-- si el método existe antes de llamarlo: stickers/client/utils.lua hace `kec.label2d[kind]` y si
+-- no es función lo imprime por consola. Si se añade un método al módulo, va también aquí.
+local function facade(exportName, methods)
+    local module = {}
+
+    for _, method in ipairs(methods) do
+        -- El `_` se come el self de `kec.label2d:info(...)`. Y la llamada al export va en forma de
+        -- método porque en forma de punto Citizen se queda el primer argumento como self y se
+        -- pierde.
+        module[method] = function(_, ...)
+            local resource = exports[name_resource]
+            return resource[exportName](resource, method, ...)
+        end
+    end
+
+    return module
+end
+
 ---@type table
 kec = setmetatable(exports[name_resource]:get() or {}, {
     __index = function() return {} end
@@ -115,34 +144,19 @@ kec.metadata = metadata
 if context == "client" then
     native = exports[name_resource]:natives()
 
-    -- kec.label2d no se inyecta como los demás módulos: el que pinta es el CEF de kecore y
-    -- SendNUIMessage solo habla con el del recurso que lo llama, así que la llamada tiene que
-    -- SALTAR a kecore. Aquí se rearma la tabla con los mismos métodos, cada uno apuntando al
-    -- export de internal/client/label2d_nui.lua.
-    --
-    -- Se pisa lo que venga en `get()`: esa copia trae los métodos como funcref y llamarlos con
-    -- `:` mandaría la tabla del CONSUMIDOR como self. Se pisa a propósito para que haya un solo
-    -- salto y sea siempre el mismo.
-    --
-    -- La lista va explícita (y no un __index que fabrique cualquier método) porque hay quien
-    -- pregunta si el método existe antes de llamarlo: stickers/client/utils.lua hace
-    -- `kec.label2d[kind]` y si no es función imprime por consola. Si se añade un método en
-    -- label2d_nui.lua, va también aquí.
-    local label2d = {}
+    kec.label2d = facade("label2d", {
+        "showText", "success", "error", "info", "warning", "hide", "clear"
+    })
 
-    for _, method in ipairs({ "showText", "success", "error", "info", "warning", "hide", "clear" }) do
-        -- El `_` se come el self de `kec.label2d:info(...)`. Y la llamada al export va con `:`
-        -- porque en forma de punto Citizen se queda el primer argumento como self y se pierde.
-        label2d[method] = function(_, ...)
-            return exports[name_resource]:label2d(method, ...)
-        end
-    end
-
-    kec.label2d = label2d
+    kec.audio = facade("audio", {
+        "play", "stop", "stopAll", "setVolume", "setMasterVolume", "getMasterVolume"
+    })
 
     AddEventHandler("kec:onPlayerLoaded", function()
         kec.isWorldLoaded = true
     end)
+else
+    kec.audio = facade("audio", { "play", "stop", "list", "resolve" })
 end
 
 local function print_debug(text, ...)

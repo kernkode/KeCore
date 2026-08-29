@@ -8,6 +8,7 @@ Welcome to the official documentation for **KeCore**, the core framework powerin
 - [Events and RPC](./EVENTS_AND_RPC.md): Local/network events, game/player event wrappers, and the asynchronous RPC system.
 - [Client API](./CLIENT_API.md): Native player methods (`native`), key bindings (`kec.keys`), 2D/3D UI elements, raycasting, scaleform, and client-side vehicle wrappers.
 - [Server API](./SERVER_API.md): Player management, Entities, Server-side Vehicles, HTTP Server, Axios HTTP Client, Discord Integration, and MongoDB/Schemas.
+- [Audio](./AUDIO.md): Positional audio streaming (`kec.audio`) — 3D emitters, interior/vehicle occlusion, server clock sync, the YouTube relay, and production deployment.
 
 ## Architecture
 

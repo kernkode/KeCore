@@ -1,8 +1,13 @@
 import { mount } from 'svelte'
 import App from './App.svelte'
+import { initAudio } from './audio'
 import './app.scss'
 
 const app = mount(App, { target: document.getElementById('app')! })
+
+// El sonido de `kec.audio` no pinta nada, así que no cuelga de App.svelte: es su propio listener
+// de mensajes. El AudioContext no se abre hasta que suene el primer emisor.
+initAudio()
 
 // El CEF no lee una fuente hasta que tiene que pintar un glifo con ella, y aquí no hay nada en
 // pantalla hasta el primer aviso: ese glifo caería en el frame del aviso, o sea justo cuando el
