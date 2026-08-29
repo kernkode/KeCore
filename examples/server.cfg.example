@@ -20,6 +20,14 @@ sv_maxclients 48
 # Loading a server icon (96x96 PNG file)
 #load_server_icon "logo.png"
 
+# Audio relay for kec.audio. `bun run dev` passes the first two as launch arguments, so these are
+# only needed with txAdmin or a bare FXServer. audio_api_key must match API_KEY in .env — this file
+# is a template that goes to git, so fill them in your own server.cfg. audio_public_url is the
+# address players reach (defaults to audio_api_url). See kecore/docs/AUDIO.md
+#set audio_api_url "http://127.0.0.1:30122"
+#set audio_api_key ""
+#set audio_public_url ""
+
 # convars which can be used in scripts
 set temp_convar "hey world!"
 sv_master1 ""

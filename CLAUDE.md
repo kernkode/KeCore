@@ -28,7 +28,7 @@ NUI (the `kec.label2d` overlay) is a separate Svelte app, built by hand:
 cd "resources/[framework]/kecore/svelte-src" && bun install && bun run build   # → ../html
 ```
 
-Before the first `bun run dev`: copy `.env.example` → `.env`, `config.cfg.example` → `config.cfg`, `server.cfg.example` → `server.cfg` (all three are gitignored). Startup hard-exits if `FXSERVER`, `ENDPOINT_TCP` or `ENDPOINT_UDP` is missing from `.env`, or if the endpoint port is already in use.
+Before the first `bun run dev`: copy `examples/.env.example` → `.env`, `examples/config.cfg.example` → `config.cfg`, `examples/server.cfg.example` → `server.cfg` (all three land in the repo root and are gitignored). Startup hard-exits if `FXSERVER`, `ENDPOINT_TCP` or `ENDPOINT_UDP` is missing from `.env`, or if the endpoint port is already in use.
 
 **There is no test runner.** No `test` script, no framework, no `scripts/test/`. Lua changes can only be verified by running the server and exercising them in-game. esbuild only transpiles, so for real type checking on a TS resource run `bunx tsc --noEmit -p "resources/[framework]/libs/tsconfig.json"` (each TS resource carries its own `tsconfig.json`).
 
@@ -80,5 +80,5 @@ Gotchas that cost real time:
 
 - Comments and log strings in the Lua framework are mostly **Spanish**; `scripts/` is mixed. Match the file you are editing.
 - **Commit messages are always written in English**, conventional-commits format: `feat(kecore): reactive state across resources`. Commits before 2026-08-26 have Spanish subjects — do not follow them.
-- `.env`, `config.cfg` and `server.cfg` are gitignored; the tracked `*.example` files are the templates — add new keys there too.
+- `.env`, `config.cfg` and `server.cfg` are gitignored; the tracked templates live in `examples/` (`examples/.env.example`, ...) — add new keys there too.
 - Generated files carry an `AUTO-GENERATED ... DO NOT EDIT` header. If you are about to edit one, you are in the wrong tree.

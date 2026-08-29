@@ -17,9 +17,9 @@ Everything the framework exposes is reachable through one global table, `kec`.
 
 ```bash
 bun install                    # postinstall downloads the recommended FXServer build
-cp .env.example .env
-cp config.cfg.example config.cfg
-cp server.cfg.example server.cfg
+cp examples/.env.example .env
+cp examples/config.cfg.example config.cfg
+cp examples/server.cfg.example server.cfg
 ```
 
 The three config files are gitignored, so each machine keeps its own. Fill in at least:
@@ -102,6 +102,7 @@ resources/[framework]/kecore/   the framework
   docs/                         API reference
 resources/[framework]/libs/     server-only TypeScript bridge (MongoDB driver, bcrypt)
 resources/[gameplay]/           game resources
+examples/                       templates for the three gitignored config files
 artifacts/                      FXServer build (downloaded)
 ```
 
@@ -206,6 +207,7 @@ Also available: `kec.zod` for runtime payload validation, `kec.axios` and `kec.h
 - [Events and RPC](resources/%5Bframework%5D/kecore/docs/EVENTS_AND_RPC.md)
 - [Client API](resources/%5Bframework%5D/kecore/docs/CLIENT_API.md)
 - [Server API](resources/%5Bframework%5D/kecore/docs/SERVER_API.md)
+- [Audio](resources/%5Bframework%5D/kecore/docs/AUDIO.md)
 
 Hosted documentation: <https://kecore-docs.vercel.app/>
 
