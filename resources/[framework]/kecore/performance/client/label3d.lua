@@ -52,9 +52,15 @@ function label3d:new()
     }
 
     function instance:render(x, y, z)
-        local onScreen, _x, _y = GetScreenCoordFromWorldCoord(x, y, z)
-
-        if not onScreen then
+        -- `GetScreenCoordFromWorldCoord` proyecta con la cámara del frame ANTERIOR, así que el
+        -- punto que devuelve no es donde el motor va a pintar ese sitio del mundo en ESTE frame.
+        -- A pie no se nota; en un coche a 200 km/h la cámara avanza casi un metro por frame y el
+        -- desfase (más el que mete cada frame de duración distinta) hace saltar el texto arriba y
+        -- abajo respecto a la cabeza. `SetDrawOrigin` ancla el dibujo en la coordenada del MUNDO y
+        -- deja la proyección al motor, ya en el frame que se está pintando: el texto se queda
+        -- quieto sobre el ped a cualquier velocidad. La proyección de aquí se queda solo para
+        -- recortar lo que no cabe en pantalla, y en el borde un frame de desfase no se ve.
+        if not GetScreenCoordFromWorldCoord(x, y, z) then
             return
         end
 
@@ -70,7 +76,12 @@ function label3d:new()
         end
 
         AddTextComponentString(self.text)
-        DrawText(_x, _y)
+
+        -- Con el origen puesto, el DrawText va en OFFSET desde el punto proyectado: (0,0) ES el
+        -- punto. Y se limpia en el acto, que el origen es global al frame.
+        SetDrawOrigin(x, y, z, 0)
+        DrawText(0.0, 0.0)
+        ClearDrawOrigin()
     end
 
     function instance:filter(filter)

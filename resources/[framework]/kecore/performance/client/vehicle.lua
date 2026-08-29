@@ -144,6 +144,17 @@ function vehicle_methods:repair()
     Entity(self.entity).state:set(state.BROKEN_WINDOWS, nil, true)
     Entity(self.entity).state:set(state.TYRES, nil, true)
     Entity(self.entity).state:set(state.DEFORMATION, nil, true)
+
+    -- Y la salud sembrada al spawnear el coche. Su handler (client/vehicle/events.lua) la reaplica
+    -- CADA vez que un cliente vuelve a streamear la entidad, así que dejarla con el valor de antes
+    -- deshacía la reparación en cuanto el coche salía y volvía a entrar en el stream —o en cuanto
+    -- su dueño reconectaba y la readoptaba—. Sin statebag manda la salud real de la entidad, que
+    -- es la que acaba de arreglar SetVehicleFixed.
+    --
+    -- Las claves a mano porque no están en `kec.vehicle.state`: son las que escriben
+    -- `setEngineHealth`/`setBodyHealth` del servidor y auth al restaurar los coches.
+    Entity(self.entity).state:set("engineHealth", nil, true)
+    Entity(self.entity).state:set("bodyHealth", nil, true)
 end
 
 function vehicle_methods:getWindowsBroken()
