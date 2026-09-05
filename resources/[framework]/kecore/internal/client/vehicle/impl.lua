@@ -249,11 +249,89 @@ function vehicle_methods:getDirtLevel()
     return GetVehicleDirtLevel(self.entity)
 end
 
+-- ------------------------------------------------------------
+-- La clase del vehículo, y los dos predicados que se preguntan siempre: si vuela y si se pedalea.
+--
+-- Viven aquí y no en cada recurso porque `GetVehicleClass` y los números que devuelve estaban
+-- copiados en media docena de sitios (el arranque del motor, la gasolina, el cuadro del HUD, el
+-- cinturón, el panel del coche), y cada copia traía su propia caché y su propia constante.
+--
+-- Es de CLIENTE: en el servidor ese native no existe, y `GetVehicleType` —el único que hay en los
+-- dos lados— mete las bicis y las motos en el mismo saco.
+--
+-- La caché va por MODELO y no por entidad: la clase es la misma para todos los vehículos de un
+-- modelo y los handles de entidad se reciclan, así que una tabla por entidad habría que barrerla
+-- para que el vehículo que hereda un handle no se quede con la clase del anterior. Cada recurso
+-- lleva su copia del módulo, y con ella su caché, igual que el resto de `performance/**`.
+-- ------------------------------------------------------------
+
+--- model -> clase
+local classes = {}
+
+--- La clase de este vehículo. `model` es opcional: se lo pasa quien ya lo tenga leído (`get`).
+---@param entity integer
+---@param model integer|nil
+---@return integer
+local function classOf(entity, model)
+    model = model or GetEntityModel(entity)
+    local class = classes[model]
+
+    if class == nil then
+        class = GetVehicleClass(entity)
+        classes[model] = class
+    end
+
+    return class
+end
+
+--- Las dos preguntas, sobre la CLASE ya resuelta: así la fórmula tiene un solo dueño y `get` no
+--- vuelve a leer nada para dejar los campos puestos.
+local function isAircraftClass(class)
+    local eClass = kec.enum.eVehicleClass
+
+    return class == eClass.HELICOPTER or class == eClass.PLANE
+end
+
+local function isCycleClass(class)
+    return class == kec.enum.eVehicleClass.CYCLE
+end
+
+--- La clase del vehículo, de `kec.enum.eVehicleClass`. Cacheada por modelo, así que se puede
+--- preguntar dentro de un bucle.
+---@param entity integer
+---@return integer
+function kec.vehicle:classOf(entity)
+    return classOf(entity)
+end
+
+--- ¿Vuela? Helicópteros y aviones, los que tienen aspas o turbinas que arrancar.
+---@param entity integer
+---@return boolean
+function kec.vehicle:isAircraft(entity)
+    return isAircraftClass(classOf(entity))
+end
+
+--- ¿Es una bici? Lo que se mueve a pedales: sin motor, sin depósito, sin luces y sin cinturón.
+---@param entity integer
+---@return boolean
+function kec.vehicle:isCycle(entity)
+    return isCycleClass(classOf(entity))
+end
+
 function kec.vehicle:get(entity)
+    local model = GetEntityModel(entity)
+    local class = classOf(entity, model)
+
     local instance = {
         entity = entity,
         netId = NetworkGetEntityIsNetworked(entity) and NetworkGetNetworkIdFromEntity(entity) or 0,
-        model = GetEntityModel(entity)
+        model = model,
+        -- La clase y sus dos preguntas van como VALOR y no como método: no cambian mientras la
+        -- entidad exista, así que se resuelven una vez aquí y se leen sin paréntesis
+        -- (`veh.isAircraft`). Los métodos de abajo sí son funciones.
+        class = class,
+        isAircraft = isAircraftClass(class),
+        isCycle = isCycleClass(class)
     }
 
     for methodName, methodFunction in pairs(vehicle_methods) do

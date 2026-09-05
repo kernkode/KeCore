@@ -1,3 +1,9 @@
+-- Las teclas del gizmo (mover y rotar entidades a mano) son de desarrollo: fuera de él no hay
+-- nada que las use y en cambio sí molestan — cuatro mapeos más en los ajustes del juego del
+-- jugador y un ExecuteCommand en cada clic izquierdo. `kec.gizmo` sigue existiendo; lo que se
+-- deja de registrar es el input.
+if not kec.dev then return end
+
 kec.keys:bind({
     name = "_gizmoSelect",
     description = "Gizmo Select",

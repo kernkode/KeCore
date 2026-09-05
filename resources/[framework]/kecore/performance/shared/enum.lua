@@ -141,6 +141,36 @@ local enum = {
         IK_L_Foot = 65245
     },
 
+    -- Las clases de vehículo que devuelve GetVehicleClass, con los nombres del juego (sin el
+    -- prefijo VC_). Es un dato de CLIENTE: en el servidor ese native no existe y lo más parecido,
+    -- GetVehicleType, mete las bicis y las motos en el mismo saco ("bike"). Quien las lee es
+    -- `kec.vehicle:classOf` y sus predicados (internal/client/vehicle/impl.lua).
+    eVehicleClass = {
+        COMPACT = 0,
+        SEDAN = 1,
+        SUV = 2,
+        COUPE = 3,
+        MUSCLE = 4,
+        SPORT_CLASSIC = 5,
+        SPORT = 6,
+        SUPER = 7,
+        MOTORCYCLE = 8,
+        OFF_ROAD = 9,
+        INDUSTRIAL = 10,
+        UTILITY = 11,
+        VAN = 12,
+        CYCLE = 13,
+        BOAT = 14,
+        HELICOPTER = 15,
+        PLANE = 16,
+        SERVICE = 17,
+        EMERGENCY = 18,
+        MILITARY = 19,
+        COMMERCIAL = 20,
+        TRAIN = 21,
+        OPEN_WHEEL = 22
+    },
+
     eVehicleDrivingFlags = {
         None = 0,
         StopForVehicles = 1,

@@ -1,87 +1,48 @@
 -- ------------------------------------------------------------
--- Estado compartido ENTRE RECURSOS.
--- Cada recurso guarda su propia copia de los valores, así que LEER es un acceso a
--- tabla: sin salto entre runtimes ni serialización. Las ESCRITURAS se replican con
--- un evento del lado, de modo que todos convergen y los onChange saltan en todos.
--- Ahí está la ventaja sobre exports para compartir datos: con exports pagas una
--- llamada entre runtimes en cada lectura; aquí solo al escribir.
+-- Estado compartido ENTRE RECURSOS. La implementación entera está en
+-- internal/shared/state.lua (ahí está el por qué), y aquí se compila la copia generada: la
+-- MISMA que carga @kecore/init.lua en cada consumidor, así que no hay dos versiones que puedan
+-- divergir. Se lee de performance/ y no de internal/ porque en cliente solo existen los
+-- ficheros que el manifiesto declara, y `files { "performance/**.lua" }` los baja todos.
 --
--- OJO: el ámbito es POR LADO. El estado del server y el del cliente son dos
--- espacios distintos; para cruzarlos siguen estando los eventos y kec.rpc.
 -- Un recurso que arranque tarde se siembra con exports.kecore:stateSnapshot().
 -- ------------------------------------------------------------
-local STATE_SYNC = "kec:state:sync"
+local STATE_CHUNK = "performance/shared/state.lua"
 
-local stateValues = {}
-local stateListeners = {}
-local thisResource = GetCurrentResourceName()
-
---- Aplica un valor al estado local y avisa a los listeners. Devuelve si cambió.
-local function applyState(key, value)
-    local oldValue = stateValues[key]
-    if oldValue == value then return false end
-    stateValues[key] = value
-
-    local listeners = stateListeners[key]
-    if listeners then
-        for i = #listeners, 1, -1 do
-            local ok, err = pcall(listeners[i], value, oldValue)
-            if not ok and kec.debugMode then
-                print(("^1[state] ERROR in onChange callback for '%s': %s^7"):format(tostring(key), tostring(err)))
-            end
-        end
+local function loadStateFactory()
+    local chunk = LoadResourceFile(GetCurrentResourceName(), STATE_CHUNK)
+    if not chunk then
+        error("[kecore] falta " .. STATE_CHUNK .. " — corre `bun run gen:performance`")
     end
-    return true
-end
 
-local stateObj = setmetatable({}, {
-    __index = function(_, key)
-        return stateValues[key]
-    end,
-    __newindex = function(_, key, value)
-        if applyState(key, value) then
-            TriggerEvent(STATE_SYNC, key, value, thisResource)
-        end
+    local factory, err = load(chunk, STATE_CHUNK)
+    if not factory then
+        error("[kecore] " .. STATE_CHUNK .. " no compila: " .. tostring(err))
     end
-})
 
--- Escritura de otro recurso: solo se aplica local (quien la originó ya la aplicó,
--- y re-emitir aquí sería un bucle).
-AddEventHandler(STATE_SYNC, function(key, value, from)
-    if from ~= thisResource then applyState(key, value) end
-end)
-
-function stateObj:get(key)
-    return stateValues[key]
+    return factory()
 end
 
-function stateObj:set(key, value)
-    stateObj[key] = value
+local stateObj = loadStateFactory()()
+
+exports('stateSnapshot', function() return stateObj:snapshot() end)
+
+-- Modo desarrollo: sale de DEV_MODE en el .env, que el devkit pasa como `+set kec_dev 1`
+-- (scripts/core/serverManager.ts). Por argumento y no en server.cfg a propósito: una copia
+-- de producción arranca sin el devkit y así nunca lo tiene. Con txAdmin tampoco hay
+-- argumentos, allí va `setr kec_dev 1` a mano. Sin nada, apagado.
+local devConvar = GetConvar("kec_dev", "0")
+local isDev = devConvar == "1" or devConvar == "true"
+
+-- El cliente solo ve convars replicados y `+set` no lo es: se replica aquí para que el
+-- `kec.dev` de un recurso de cliente valga lo mismo que el del servidor.
+if IsDuplicityVersion() then
+    SetConvarReplicated("kec_dev", isDev and "1" or "0")
 end
-
-function stateObj:onChange(key, callback)
-    if type(callback) ~= "function" then return function() end end
-    stateListeners[key] = stateListeners[key] or {}
-    table.insert(stateListeners[key], callback)
-
-    return function()
-        if stateListeners[key] then
-            for i, cb in ipairs(stateListeners[key]) do
-                if cb == callback then
-                    table.remove(stateListeners[key], i)
-                    break
-                end
-            end
-        end
-    end
-end
-
---- Foto del estado actual, para que un recurso que arranque después no empiece a
---- ciegas (init.lua la pide al cargar).
-exports('stateSnapshot', function() return stateValues end)
 
 ---@class kec
 kec = {
+    dev = isDev,
     debugMode = false,
     debugEvents = false,
     isWorldLoaded = false,

@@ -53,11 +53,18 @@ local function payload(id, src)
         offset = src.offset + elapsed,
         netId = src.netId,
         coords = src.coords,
-        space = src.space,
-        muffle = src.muffle,
+        occlusion = src.occlusion,
+        flat = src.flat,
         refDistance = src.refDistance,
         maxDistance = src.maxDistance
     }
+end
+
+--- Un punto en tabla plana. Un vector3 del servidor viaja igual, pero así el registro guarda siempre
+--- la misma forma y el cliente no tiene que distinguir.
+local function point(p)
+    if not p or not p.x then return nil end
+    return { x = p.x + 0.0, y = p.y + 0.0, z = p.z + 0.0 }
 end
 
 --- Arranca un emisor.
@@ -68,7 +75,7 @@ end
 ---   entity = veh | netId = 12, -- se mueve con la entidad
 ---   coords = { x, y, z },      -- o se queda quieto ahí
 ---   duration = 213,            -- segundos; solo para retirar del registro una pista que acabó
----   volume, loop, offset, refDistance, maxDistance, space, muffle  -- ver el cliente
+---   volume, loop, offset, refDistance, maxDistance, occlusion, flat  -- ver el cliente
 --- }
 ---@return string|nil id
 function kec.audio:play(opts)
@@ -84,13 +91,6 @@ function kec.audio:play(opts)
         netId = NetworkGetNetworkIdFromEntity(opts.entity)
     end
 
-    local coords = opts.coords
-    if coords and coords.x then
-        -- Se copia a una tabla plana: un vector3 del servidor viaja, pero así el registro guarda
-        -- siempre la misma forma y el cliente no tiene que distinguir.
-        coords = { x = coords.x + 0.0, y = coords.y + 0.0, z = coords.z + 0.0 }
-    end
-
     sources[id] = {
         url = opts.url,
         volume = opts.volume,
@@ -98,9 +98,9 @@ function kec.audio:play(opts)
         offset = opts.offset or 0.0,
         duration = opts.duration,
         netId = netId,
-        coords = coords,
-        space = opts.space,
-        muffle = opts.muffle,
+        coords = point(opts.coords),
+        occlusion = opts.occlusion,
+        flat = opts.flat,
         refDistance = opts.refDistance,
         maxDistance = opts.maxDistance,
         target = opts.target,
@@ -165,7 +165,7 @@ end
 --- los clientes; por defecto el mismo) y `audio_api_key` (la API_KEY del .env del devkit).
 ---
 ---@param url string Link de YouTube, en cualquiera de sus formas
----@param cb fun(track: table|nil, err: string|nil) track = { url, title, duration, isLive }
+---@param cb fun(track: table|nil, err: string|nil) track = { id, url, title, duration, isLive }
 function kec.audio:resolve(url, cb)
     local api = GetConvar("audio_api_url", "")
     local key = GetConvar("audio_api_key", "")
@@ -197,11 +197,53 @@ function kec.audio:resolve(url, cb)
         end
 
         cb({
+            -- El id del vídeo tal como lo ha entendido el relay: es lo que hay que guardar para
+            -- volver a poner esto (un link pegado a mano y el id pelado acaban en el mismo id).
+            id = data.id,
             url = public .. data.path,
             title = data.title,
             duration = data.duration,
             isLive = data.isLive
         })
+    end)
+end
+
+--- Busca en YouTube por texto y devuelve una lista para elegir, que es lo que ahorra tener que pegar
+--- un link. Lo hace el mismo relay del devkit, y con `--flat-playlist`: de cada resultado vuelve lo
+--- que trae la página de búsqueda y NO su URL tocable, así que del elegido hay que pasar por
+--- `resolve` (le vale el id pelado).
+---
+--- Las mismas convars que `resolve`, y no hace falta la pública: aquí no viaja ninguna URL.
+---
+---@param query string Lo que se busca, tal como lo ha escrito el jugador
+---@param limit number|nil Cuántos resultados como mucho (el relay topa en 10)
+---@param cb fun(results: table|nil, err: string|nil) results = { { id, title, duration, channel } }
+function kec.audio:search(query, limit, cb)
+    local api = GetConvar("audio_api_url", "")
+    local key = GetConvar("audio_api_key", "")
+
+    if api == "" or key == "" then
+        cb(nil, "faltan las convars audio_api_url / audio_api_key (ver config.cfg)")
+        return
+    end
+
+    kec.axios:post(api .. "/api/audio/search", { query = query, limit = limit }, {
+        headers = {
+            ["Content-Type"] = "application/json",
+            ["Accept"] = "application/json",
+            ["x-api-key"] = key
+        },
+        -- Una búsqueda es un yt-dlp más, así que se le da el mismo margen largo que al resolve.
+        timeout = 30000
+    }, function(err, response)
+        local data = response and response.data
+
+        if err or type(data) ~= "table" or type(data.results) ~= "table" then
+            cb(nil, (data and data.error) or ("el relay no buscó (" .. tostring(err) .. ")"))
+            return
+        end
+
+        cb(data.results)
     end)
 end
 

@@ -10,12 +10,12 @@ AddEventHandler("onResourceStop", function(resourceName)
             if req.promise then req.promise:resolve(nil) end
         end
         pendingRequests = {}
-    elseif cache[resourceName] then
+    elseif rpcHandlerCache[resourceName] then
         -- Si otro recurso que registró RPCs se detiene
-        for _, func in ipairs(cache[resourceName]) do
+        for _, func in ipairs(rpcHandlerCache[resourceName]) do
             RemoveEventHandler(func)
         end
-        cache[resourceName] = nil
+        rpcHandlerCache[resourceName] = nil
     end
 end)
 
@@ -30,7 +30,8 @@ end)
 -- Evento central que recibe todas las peticiones RPC de red
 RegisterNetEvent(RPC_NETWORK_EVENT, function(rpc_name, gen_id, ...)
     local src = source
-    local args = {...}
+    -- table.pack por lo mismo que en impl.lua: `{...}` + unpack cortaba en el primer nil.
+    local args = table.pack(...)
 
     local rpc_hash = tostring(kec:hash(rpc_name))
     local handlerData = registeredHandlers[rpc_hash]
@@ -55,14 +56,13 @@ RegisterNetEvent(RPC_NETWORK_EVENT, function(rpc_name, gen_id, ...)
     end
 
     -- Si pasa la validación, ejecutamos el handler de forma segura
-    local success, result = pcall(function()
-        if IS_SERVER then
-            local player = kec:player(src)
-            return handlerData.func(player, table.unpack(args))
-        else
-            return handlerData.func(table.unpack(args))
-        end
-    end)
+    local success, result
+    if IS_SERVER then
+        local player = kec:player(src)
+        success, result = pcall(handlerData.func, player, table.unpack(args, 1, args.n))
+    else
+        success, result = pcall(handlerData.func, table.unpack(args, 1, args.n))
+    end
 
     if not success then
         print(("^1[RPC ERROR] Fallo ejecutando '%s': %s^0"):format(rpc_name, tostring(result)))

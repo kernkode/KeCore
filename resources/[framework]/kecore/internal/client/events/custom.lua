@@ -145,7 +145,6 @@ local MAX_SHOTS_PER_SECOND = 80 -- la minigun ronda 50 balas/s, así que 80 deja
 -- (se compara con la lectura anterior, no con la del frame anterior) y el tope de abajo ya se
 -- calcula sobre el tiempo REAL transcurrido, así que a 30 Hz no se pierde ni una bala y el tick
 -- cuesta la mitad. Este bucle es lo único que kecore corre por frame en cliente.
-local SHOT_POLL_MS = 33
 local lastShotSeenAt = 0
 local lastShotCheckAt = 0
 local shotWeapon, shotAmmo = nil, 0
@@ -195,4 +194,4 @@ kec:everyTick(function()
         clip = clip,
         ammo = ammo
     })
-end, SHOT_POLL_MS)
+end)

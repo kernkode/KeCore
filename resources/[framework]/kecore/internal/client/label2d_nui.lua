@@ -108,10 +108,6 @@ function kec.label2d:showText(text, options)
     local id = counter
     local position = options.position or {}
 
-    -- Un `font` numérico es la fuente de DrawText de las llamadas de antes (0, 4...). Ya no
-    -- significa nada, y colarlo en un font-family dejaría el aviso en la fuente del sistema.
-    local font = type(options.font) == "string" and options.font or DEFAULTS.font
-
     -- La sombra y el contorno se leen así y no con un `== true` a secas: los dos van PUESTOS por
     -- defecto, y un `== true` los apagaría siempre que la llamada no los pidiera a mano.
     local shadow = options.shadow
@@ -131,7 +127,7 @@ function kec.label2d:showText(text, options)
             y = position.y or DEFAULTS.y,
             align = options.align or DEFAULTS.align,
             size = options.size or (options.scale and options.scale * SCALE_TO_PX) or DEFAULTS.size,
-            font = font,
+            font = options.font or DEFAULTS.font,
             weight = options.weight or DEFAULTS.weight,
             shadow = shadow == true,
             outline = outline == true,

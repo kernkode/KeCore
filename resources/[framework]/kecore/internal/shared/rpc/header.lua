@@ -10,11 +10,14 @@ kec._internal.rpc = kec._internal.rpc or {
     registeredHandlers = {}
 }
 
-cache = kec._internal.rpc.cache
+-- Estos tres son GLOBALES a propósito: los comparten header/impl/events, que son tres chunks
+-- distintos del fxmanifest y no comparten locales. `rpcHandlerCache` y no `cache` porque un
+-- nombre así de genérico en el _G de kecore es una colisión esperando a que alguien se olvide
+-- de un `local` (events/manager.lua tiene su propio `cache`, ese sí local).
+rpcHandlerCache = kec._internal.rpc.cache
 pendingRequests = kec._internal.rpc.pendingRequests
 registeredHandlers = kec._internal.rpc.registeredHandlers
 
 RPC_ERROR_EVENT = "kec:rpc:error"
 RPC_RESPONSE_EVENT = "kec:rpc:response"
-RPC_VALIDATE_EVENT = "kec:rpc:validate"
 RPC_NETWORK_EVENT = "kec:rpc:triggerNetwork"

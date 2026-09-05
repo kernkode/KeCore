@@ -6,9 +6,6 @@ local timers = {}
 ---Active timers
 local actives = {}
 
----Timers cache
-local cache = {}
-
 ---Counter for unique IDs
 local nextId = 1
 
@@ -32,18 +29,24 @@ end
 ---@param id number
 ---@return boolean success
 function timers:clearTimer(id)
-    if id and actives[id] ~= nil then
-        actives[id] = nil
-        cache[id] = nil
-        return true
-    else
-        warn("Warning: clearTimer called with invalid ID: " .. tostring(id))
+    -- Un id que ya no está corriendo NO es un error: cancelar un tick que se apagó solo (o
+    -- cancelarlo dos veces) es normal, y avisar de eso llenaba la consola. Solo se avisa de un
+    -- id ausente, que sí es un fallo de quien llama.
+    if id == nil then
+        warn("Warning: clearTimer called without an ID")
         return false
     end
+
+    if actives[id] == nil then return false end
+
+    actives[id] = nil
+    return true
 end
 
 ---Creates a timer that runs every tick (every frame)
 ---@param fn fun(): boolean|nil Function to execute. Return false to stop the timer.
+---@param time number|nil Milisegundos entre pasadas. 0 (o nada) = cada frame; con un valor es un
+---                       bucle auto-frenado, así que no hace falta comparar relojes a mano dentro.
 ---@return table instance
 function timers:everyTick(fn, time)
     local id = nextId
@@ -51,10 +54,6 @@ function timers:everyTick(fn, time)
     actives[id] = true
 
     time = time or 0
-
-    cache[id] = {
-        callingResource = GetInvokingResource()
-    }
 
     Citizen.CreateThread(function()
         while actives[id] do
@@ -75,7 +74,6 @@ function timers:everyTick(fn, time)
             Wait(time)
         end
         actives[id] = nil
-        cache[id] = nil
     end)
     return handle_timer(id)
 end
@@ -95,18 +93,15 @@ function timers:setInterval(fn, time)
     local id = nextId
     nextId = nextId + 1
     actives[id] = true
-    cache[id] = {
-        callingResource = GetInvokingResource()
-    }
 
     Citizen.CreateThread(function()
         while actives[id] do
             Wait(time)
 
             if actives[id] == nil then break end
-            local success, result = pcall(function()
-                fn(id)
-            end)
+            -- pcall(fn, id) y no pcall(function() fn(id) end): la closure se alojaba en CADA
+            -- pasada del interval.
+            local success, result = pcall(fn, id)
 
             if not success then
                 print("Error en el intervalo:", result)
@@ -114,7 +109,6 @@ function timers:setInterval(fn, time)
             end
         end
         actives[id] = nil
-        cache[id] = nil
     end)
     return handle_timer(id)
 end
@@ -128,10 +122,6 @@ function timers:setTimeout(fn, timeout)
     nextId = nextId + 1
     actives[id] = true
 
-    cache[id] = {
-        callingResource = GetInvokingResource()
-    }
-
     CreateThread(function()
         Wait(timeout)
         if actives[id] then
@@ -141,7 +131,6 @@ function timers:setTimeout(fn, timeout)
             end
         end
         actives[id] = nil
-        cache[id] = nil
     end)
     return handle_timer(id)
 end
@@ -217,13 +206,5 @@ function timers:countDown(key, timeString)
 
     return timer
 end
-
-AddEventHandler("onResourceStop", function(resourceName)
-    for id, data in pairs(cache) do
-        if data and data.callingResource == resourceName then
-            timers:clearTimer(id)
-        end
-    end
-end)
 
 return timers

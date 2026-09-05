@@ -138,7 +138,29 @@ local function DrawPlayerGizmo(entity)
     end
 end
 
-local entitySelected, tick
+local entitySelected, tick, label, labelHeight
+
+--- El nombre del modelo de una entidad, para saber QUÉ estás moviendo.
+---
+--- `GetEntityArchetypeName` es una native de CFX que devuelve un string; en los artifacts donde no
+--- tenga envoltorio hay que invocarla por su hash y pedir el resultado como string, porque leyéndolo
+--- como número devuelve un puntero (y con eso el cliente se cae). Va en pcall y UNA sola vez al
+--- seleccionar, no por frame.
+---
+--- Si no hay manera, queda el hash: sirve igual para buscar el modelo en un dump.
+local function modelNameOf(entity)
+    local ok, name = pcall(function()
+        if GetEntityArchetypeName then return GetEntityArchetypeName(entity) end
+        return Citizen.InvokeNative(0x47B870F5, entity, Citizen.ResultAsString())
+    end)
+
+    if ok and type(name) == "string" and name ~= "" then
+        return name
+    end
+
+    -- El `& 0xFFFFFFFF` es porque un hash llega firmado y sin él sale un FFFFFFFF... de 64 bits.
+    return ("0x%08X"):format(GetEntityModel(entity) & 0xFFFFFFFF)
+end
 
 function kec.gizmo:use(entity)
     if self:isRunning() then return end
@@ -151,6 +173,15 @@ function kec.gizmo:use(entity)
 
     entitySelected = entity
 
+    -- El nombre del modelo, flotando sobre lo que estás moviendo.
+    label = kec.label3d:new():filter({ text = modelNameOf(entity) })
+
+    -- A qué altura: el techo de la caja del modelo, que en un prop grande está muy por encima de su
+    -- centro (que es lo que devuelve GetEntityCoords). Es la caja SIN rotar, así que tumbando el
+    -- objeto el texto se queda algo alto; para leer un nombre da igual.
+    local _, max = GetModelDimensions(GetEntityModel(entity))
+    labelHeight = max.z + 0.25
+
     if GetEntityType(entity) ~= 1 then
         SetEntityDrawOutline(entity, true)
     end
@@ -160,6 +191,9 @@ function kec.gizmo:use(entity)
         tick = kec:everyTick(function()
             if DoesEntityExist(entity) then
                 DrawPlayerGizmo(entity)
+
+                local coords = GetEntityCoords(entity)
+                label:render(coords.x, coords.y, coords.z + labelHeight)
             else
                 self:stop()
             end
@@ -177,6 +211,8 @@ function kec.gizmo:stop()
         scaleform:destroy()
         scaleform = nil
     end
+
+    label, labelHeight = nil, nil
 
     if entitySelected and DoesEntityExist(entitySelected) then
         FreezeEntityPosition(entitySelected, false)

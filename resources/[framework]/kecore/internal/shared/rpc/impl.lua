@@ -1,6 +1,7 @@
 kec.rpc = {}
 
--- Helper para finalizar una petición
+-- Helper para finalizar una petición. Global porque rpc/events.lua es otro chunk del
+-- fxmanifest y lo llama desde allí.
 function finalizeRequest(gen_id, success, result, isNotFoundError)
     local req = pendingRequests[gen_id]
     if not req then return end
@@ -33,22 +34,32 @@ end
 
 local requestCounter = 0
 
+--- Siguiente id libre, o nil si no queda ninguno. Devolver uno OCUPADO al agotar los intentos
+--- (lo que hacía antes) resolvía la petición equivocada: dos llamadas compartiendo id y la
+--- respuesta de una cerrando la otra. Con nil, la llamada falla y se ve.
 local function getNextId()
-    local attempts = 0
-    repeat
+    for _ = 1, 65535 do
         requestCounter = requestCounter + 1
-        if requestCounter > 65535 then 
-            requestCounter = 1 
+        if requestCounter > 65535 then
+            requestCounter = 1
         end
-        attempts = attempts + 1
-    until not pendingRequests[requestCounter] or attempts >= 65535
-    return requestCounter
+        if not pendingRequests[requestCounter] then
+            return requestCounter
+        end
+    end
+
+    return nil
 end
 
 local function handleAwait(name, timeout, triggerCallback, responseCallback)
     local p = nil
     local gen_id = getNextId()
     timeout = timeout or DEFAULT_TIMEOUT
+
+    if not gen_id then
+        print(("^1[RPC ERROR] 65535 peticiones en vuelo: '%s' no se envía.^0"):format(name))
+        return nil
+    end
 
     if not responseCallback then p = promise.new() end
 
@@ -102,17 +113,19 @@ function kec.rpc:register(name, handler, isNetwork)
 
     -- SOLO registramos un evento local para uso interno dentro de la misma máquina
     local handler_func = AddEventHandler(rpc_hash, function(gen_id, ...)
-        local args = {...}
+        -- table.pack y no `{...}`: con `{...}` + table.unpack(args) los argumentos se cortan en
+        -- el primer nil, así que un RPC llamado con (a, nil, c) perdía la `c`.
+        local args = table.pack(...)
         -- Validación estricta de que esto es puramente local
         if source ~= nil and tostring(source) ~= "" then return end
 
-        local success, ret = pcall(function() return handler(table.unpack(args)) end)
+        local success, ret = pcall(handler, table.unpack(args, 1, args.n))
 
         kec:emit(RPC_RESPONSE_EVENT, gen_id, success and ret or nil)
     end)
 
-    if not cache[invokingRes] then cache[invokingRes] = {} end
-    table.insert(cache[invokingRes], handler_func)
+    if not rpcHandlerCache[invokingRes] then rpcHandlerCache[invokingRes] = {} end
+    table.insert(rpcHandlerCache[invokingRes], handler_func)
 end
 
 --- Llamada RPC Local

@@ -601,8 +601,12 @@ end
 function native:warpIntoVehicle(netId, seat)
     seat = seat or -1
     local timeout = GetGameTimer() + 3000
+
+    -- 50 ms y no 10: preguntar por un netId que todavía no ha llegado suelta un aviso del motor por
+    -- llamada (`GetNetworkObject: no object by ID`), y a 100 Hz eran trescientas líneas de consola
+    -- por cada coche que tarda en aparecer. Medio segundo de espera de más no lo nota nadie.
     while not NetworkDoesEntityExistWithNetworkId(netId) and GetGameTimer() < timeout do
-        Wait(10)
+        Wait(50)
     end
     if NetworkDoesEntityExistWithNetworkId(netId) then
         local veh = NetToVeh(netId)
@@ -650,6 +654,19 @@ function native:hideHudComponents(components)
         end
     else
         HideHudComponentThisFrame(components)
+    end
+end
+
+--- El espejo del de arriba: fuerza un componente del HUD ESTE frame. Hace falta para lo que el motor
+--- esconde por su cuenta —la retícula deja de dibujarse mientras se renderiza una cámara de script—,
+--- así que como el de esconder, se pide por frame.
+function native:showHudComponents(components)
+    if type(components) == "table" then
+        for i = 1, #components do
+            ShowHudComponentThisFrame(components[i])
+        end
+    else
+        ShowHudComponentThisFrame(components)
     end
 end
 

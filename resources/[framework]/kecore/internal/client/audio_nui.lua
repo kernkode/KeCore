@@ -6,20 +6,28 @@
 -- la reverb que hacen falta para que la música de un coche se mueva con él y para que la de
 -- una discoteca se oiga desde la calle como si estuviera sonando dentro.
 --
+-- Esto es un MOTOR, no un sistema. Hace lo que solo se puede hacer desde aquí —resolver la entidad
+-- de un emisor, pasar el mundo al espacio de la cámara, mandar al CEF solo lo que cambió— y no tiene
+-- ninguna opinión sobre por qué algo suena tapado. Eso lo decide quien lo usa, con `occlusion`:
+-- una disco mira su interior y su puerta, un coche mira si vas dentro, y otro puede tirar un raycast
+-- o inventarse lo que quiera. Cada recurso trae su regla y no hereda la de nadie.
+--
 -- Vive SOLO en kecore y a propósito NO está en scripts/builder/perf-modules.ts, por lo mismo
 -- que label2d_nui.lua: el `ui_page` es de este recurso y SendNUIMessage solo habla con el CEF
 -- de quien la llama, así que una copia inyectada en un consumidor le hablaría a un CEF que no
 -- tiene. Los demás recursos llegan por el export del final, que @kecore/init.lua envuelve en
 -- un `kec.audio` con estos mismos métodos.
 --
--- El grafo de audio y los mandos del sonido (corte del filtro, mezcla de reverb) están en
--- svelte-src/src/audio.ts. Aquí solo vive la parte que necesita al juego: dónde está cada
--- emisor respecto de la cámara y si hay una pared en medio.
+-- El grafo de audio y los mandos del sonido (a cuántos Hz corta el filtro con oclusión 1, cuánta
+-- reverb entra) están en svelte-src/src/audio.ts.
 --
 -- Uso:
---   kec.audio:play({ url = "https://...", entity = veh, loop = true })
---   kec.audio:play({ url = "https://...", coords = vector3(...), volume = 0.8 })
+--   local id = kec.audio:play({ url = "https://...", entity = veh, loop = true })
+--   local id = kec.audio:play({ url = "https://...", coords = vector3(...), volume = 0.8 })
 --   kec.audio:play({ url = "nui://kecore/html/beep.ogg" })   -- sin sitio: 2D, en tu cabeza
+--   kec.audio:occlusion(id, 0.85)   -- lo tapa una pared: TÚ decides cuándo y cuánto
+--   kec.audio:flat(id, true)        -- sin panner, la mezcla original (vas dentro del coche)
+--   kec.audio:position(id, x, y, z) -- moverlo, o kec.audio:attach(id, entity) para que siga a algo
 --   kec.audio:stop(id)
 -- ============================================================
 
@@ -34,16 +42,17 @@ local DEFAULTS = {
     -- oye; entre medias cae con el modelo inverso del panner. 40 m es el radio de una manzana:
     -- suficiente para oír el bajo de la disco desde la esquina.
     refDistance = 2.0,
-    maxDistance = 40.0,
-    -- Cuánto se lo comen las paredes cuando NO estás en la misma sala (o en el mismo coche).
-    -- 0 = como si no hubiera pared, 1 = tapiado. Es el mando a mover si desde fuera se oye
-    -- demasiado claro o demasiado poco; lo que hace con este número está en audio.ts.
-    muffle = 0.85
+    maxDistance = 40.0
 }
 
 -- 20 Hz. El panner interpola entre mensaje y mensaje (rampa de 60 ms en audio.ts), así que a
 -- 50 ms ya suena continuo y cuesta un tercio de lo que costaría mandarlo por frame.
 local TICK_MS = 50
+
+-- Cada cuánto se vuelve a intentar resolver el netId de un emisor que este cliente todavía no tiene
+-- (ver `resolveEntity`). Un segundo es de sobra: el coche tiene que entrar en los ~150 m del
+-- streaming y aún le quedan 100 para acercarse a los 45 en los que se oye.
+local RETRY_MS = 1000
 
 -- Por debajo de esto no se manda el emisor: la posición no ha cambiado lo bastante para que se
 -- note. Con la cámara quieta esto deja el tick en cero mensajes.
@@ -54,6 +63,13 @@ local KVP_MASTER = "kec:audio:master"
 local EV_PLAY = "kec:audio:play"
 local EV_STOP = "kec:audio:stop"
 local EV_SYNC = "kec:audio:sync"
+
+-- Estos dos son LOCALES (TriggerEvent, no red): avisan a los demás recursos de este cliente de que un
+-- emisor ya existe o ya no. Hacen falta porque quien manda la oclusión no suele ser quien crea el
+-- emisor —una disco la arranca el servidor— y hasta que llega no hay a quién ponérsela.
+--   kec:onLocal("kec:audio:started", function(id) ... end)
+local EV_STARTED = "kec:audio:started"
+local EV_STOPPED = "kec:audio:stopped"
 
 local RAD = math.pi / 180
 
@@ -72,6 +88,11 @@ local master = tonumber(GetResourceKvpString(KVP_MASTER) or "") or 1.0
 --- streameada: entonces devuelve 0 y el emisor se salta ESE tick, pero sigue vivo (se resuelve
 --- solo en cuanto el coche entre en el radio). Uno creado en el cliente con un handle local no
 --- tiene netId, así que si desaparece ya no vuelve.
+---
+--- El reintento va a RETRY_MS y no en cada tick: preguntarle al motor por un netId que este cliente
+--- no tiene suelta un aviso por llamada (`GetNetworkObject: no object by ID`), y a 20 Hz eso es la
+--- consola llena mientras un coche con música está fuera de streaming. No se pierde nada: a esa
+--- distancia el emisor está muy por encima de su `maxDistance`, así que no se oye de todas formas.
 ---@return number entity, boolean gone
 local function resolveEntity(src)
     if src.entity and DoesEntityExist(src.entity) then
@@ -82,6 +103,13 @@ local function resolveEntity(src)
         return 0, src.entity ~= nil
     end
 
+    local now = GetGameTimer()
+    if src.triedAt and now - src.triedAt < RETRY_MS then
+        return 0, false
+    end
+
+    src.triedAt = now
+
     local entity = NetworkGetEntityFromNetworkId(src.netId)
     if entity and entity ~= 0 and DoesEntityExist(entity) then
         src.entity = entity
@@ -91,59 +119,13 @@ local function resolveEntity(src)
     return 0, false
 end
 
---- Cuánto se lo come la pared, de 0 a 1.
---- Una native por emisor y nada más: lo que hace falta saber es si estás en la MISMA sala que
---- el sonido, no dónde está cada ladrillo.
---- ponytail: no hay raycast, así que una pared suelta (un muro en un descampado) no tapa nada.
---- El día que haga falta, un StartShapeTestLosProbe a 5 Hz con el resultado interpolado.
-local function occlusionOf(src, ped, pedVehicle, pedInterior)
-    if src.space == "vehicle" then
-        return (pedVehicle ~= 0 and pedVehicle == src.entity) and 0.0 or src.muffle
-    end
-
-    if src.space == "interior" then
-        return (pedInterior == src.interior) and 0.0 or src.muffle
-    end
-
-    return 0.0
-end
-
---- En qué sala vive el sonido, que es lo que decide si las paredes se lo comen.
---- Se calcula UNA vez (no por tick): un coche no deja de ser un coche y una disco no se mueve.
---- Si la entidad todavía no está streameada no se puede saber, así que se deja sin decidir y se
---- vuelve a intentar en cuanto se resuelva — hasta entonces el emisor suena sin amortiguar, que
---- es el fallo que menos molesta (se oye, en vez de no oírse).
-local function detectSpace(src, entity)
-    if entity and entity ~= 0 then
-        if GetEntityType(entity) == 2 then
-            src.space = "vehicle"
-            return
-        end
-
-        local interior = GetInteriorFromEntity(entity)
-        if interior ~= 0 then
-            src.space, src.interior = "interior", interior
-            return
-        end
-
-        src.space = "open"
-        return
-    end
-
-    if src.coords then
-        local interior = GetInteriorAtCoords(src.coords.x, src.coords.y, src.coords.z)
-        if interior ~= 0 then
-            src.space, src.interior = "interior", interior
-        else
-            src.space = "open"
-        end
-    end
-end
-
 --- Pasa las coordenadas del mundo al espacio de la cámara y manda la tanda al CEF.
 --- Se transforma AQUÍ para que el listener del CEF se quede quieto en el origen: así el mensaje
 --- lleva solo la posición de cada emisor y no hace falta mandarle también la orientación de la
 --- cámara (que cambia cada frame) ni que él haga la matriz.
+---
+--- La oclusión no se calcula: se manda la que el dueño del emisor haya dejado puesta con
+--- `kec.audio:occlusion`. Este tick solo la acarrea, y solo cuando ha cambiado.
 local function update()
     local cam = GetFinalRenderedCamCoord()
     local rot = GetFinalRenderedCamRot(2)
@@ -156,10 +138,6 @@ local function update()
     local rx, ry = math.cos(yaw), math.sin(yaw)
     -- arriba = derecha × adelante (rz es 0, así que los términos que lo llevan se caen)
     local ux, uy, uz = ry * fz, -rx * fz, rx * fy - ry * fx
-
-    local ped = kec.player:ped()
-    local pedVehicle = GetVehiclePedIsIn(ped, false)
-    local pedInterior = GetInteriorFromEntity(ped)
 
     -- Claves de una letra: este mensaje sale 20 veces por segundo y el JSON lo paga entero.
     local list, n = {}, 0
@@ -175,9 +153,6 @@ local function update()
                 if gone then
                     kec.audio:stop(id)
                 elseif entity ~= 0 then
-                    -- Primera vez que se resuelve: ya se puede saber si es un coche o una sala.
-                    if not src.space then detectSpace(src, entity) end
-
                     local coords = GetEntityCoords(entity)
                     sx, sy, sz = coords.x, coords.y, coords.z
                 end
@@ -189,16 +164,23 @@ local function update()
             local ax = dx * rx + dy * ry
             local ay = dx * ux + dy * uy + dz * uz
             local az = -(dx * fx + dy * fy + dz * fz)
-            local oc = occlusionOf(src, ped, pedVehicle, pedInterior)
 
-            if oc ~= src.oc
-                or math.abs(ax - src.ax) > MOVE_EPSILON
+            -- En 2D la posición ya no pinta nada, así que solo se manda cuando cambia el modo o la
+            -- oclusión: conduciendo, el bamboleo de la cámara mandaría un mensaje por tick para mover
+            -- un panner que nadie está oyendo.
+            local moved = not src.flat and (
+                math.abs(ax - src.ax) > MOVE_EPSILON
                 or math.abs(ay - src.ay) > MOVE_EPSILON
                 or math.abs(az - src.az) > MOVE_EPSILON
-            then
-                src.ax, src.ay, src.az, src.oc = ax, ay, az, oc
+            )
+
+            if moved or src.oc ~= src.sentOc or src.flat ~= src.sentFlat then
+                src.ax, src.ay, src.az = ax, ay, az
+                src.sentOc, src.sentFlat = src.oc, src.flat
                 n = n + 1
-                list[n] = { i = id, x = ax, y = ay, z = az, o = oc }
+                -- `d`: en 2D, sin panner. La posición viaja igual, y es la que deja el panner
+                -- puesto en su sitio para el instante en que te bajes del coche.
+                list[n] = { i = id, x = ax, y = ay, z = az, o = src.oc, d = src.flat }
             end
         end
     end
@@ -228,8 +210,8 @@ end
 ---   coords = vector3(...),     -- o se queda quieto ahí
 ---   -- sin entity ni coords: 2D, suena igual desde donde sea (avisos, UI)
 ---   refDistance = 2.0, maxDistance = 40.0,
----   space = "vehicle"|"interior"|"open",  -- se autodetecta; esto es para forzarlo
----   muffle = 0.85              -- cuánto se lo come la pared cuando no estás dentro
+---   occlusion = 0.0,           -- cuánta pared hay de salida; se cambia con kec.audio:occlusion
+---   flat = false               -- sin panner, la mezcla original tal cual
 --- }
 ---@return string|nil id
 function kec.audio:play(opts)
@@ -255,20 +237,19 @@ function kec.audio:play(opts)
         entity = opts.entity,
         netId = opts.netId,
         coords = opts.coords,
-        space = opts.space,
-        muffle = opts.muffle or DEFAULTS.muffle,
-        -- Posición ya mandada, para el filtro de "no se ha movido". Lejísimos, para que el
-        -- primer tick siempre pase el filtro y el emisor se coloque antes de sonar del todo.
-        ax = math.huge, ay = math.huge, az = math.huge, oc = -1
+        -- Lo que el dueño del emisor quiere que se oiga. Arranca sin pared: kecore no sabe si hay
+        -- una y no se la inventa.
+        oc = tonumber(opts.occlusion) or 0.0,
+        flat = opts.flat == true,
+        -- Lo ya mandado, para el filtro de "no ha cambiado nada". Lejísimos y con una oclusión
+        -- imposible para que el primer tick pase el filtro siempre y el emisor quede colocado
+        -- antes de sonar del todo. `sentFlat` empieza sin valor por lo mismo.
+        ax = math.huge, ay = math.huge, az = math.huge, sentOc = -1, sentFlat = nil
     }
 
     sources[id] = src
 
     if spatial then
-        if not src.space then
-            detectSpace(src, src.entity or (src.netId and NetworkGetEntityFromNetworkId(src.netId)))
-        end
-
         spatialCount = spatialCount + 1
         syncTick()
     end
@@ -288,31 +269,127 @@ function kec.audio:play(opts)
         }
     })
 
+    TriggerEvent(EV_STARTED, id)
+
     return id
+end
+
+--- Cuánta pared hay entre el emisor y quien escucha, de 0 (ninguna) a 1 (tapiado).
+---
+--- kecore no lo calcula. No sabe si tu música está detrás de una pared, dentro de un coche o al aire,
+--- y adivinarlo era justo lo que ataba a todos al mismo sistema: lo pone el dueño del emisor, con la
+--- regla que le dé la gana. Este lado solo lo acarrea hasta el CEF, que es quien lo convierte en Hz y
+--- dB (ver TUNING en svelte-src/src/audio.ts).
+---
+--- Llámalo SOLO cuando el número cambie de verdad: desde otro recurso esto cruza de VM (es un export)
+--- y por frame sale carísimo. Con un umbral de un 2% en el llamador no se nota ni al oído.
+---
+--- En un emisor 2D no hace nada: sin sitio no hay pared que valga.
+---@param id string
+---@param value number 0..1
+---@return boolean applied false si ese emisor no existe (todavía) en este cliente
+function kec.audio:occlusion(id, value)
+    local src = sources[tostring(id)]
+    if not src then return false end
+
+    src.oc = math.max(0.0, math.min(1.0, tonumber(value) or 0.0))
+    return true
+end
+
+--- Quita el panner: el emisor suena con su mezcla original, como si el altavoz te rodeara.
+---
+--- Es lo que quiere un coche por dentro. El panner coloca el sonido respecto de la CÁMARA, y la de GTA
+--- va varios metros por detrás del coche: sentado dentro, la música se oía venir de delante y girar
+--- cada vez que giras la cámara. Un interior grande NO lo quiere — una disco se anda por dentro y la
+--- música tiene que seguir estando en la cabina del DJ.
+---
+--- La posición se sigue mandando: es la que deja el panner en su sitio para cuando te bajes.
+---@param id string
+---@param value boolean
+---@return boolean applied false si ese emisor no existe (todavía) en este cliente
+function kec.audio:flat(id, value)
+    local src = sources[tostring(id)]
+    if not src then return false end
+
+    src.flat = value == true
+    return true
+end
+
+--- Mueve un emisor con sitio. Acepta (id, x, y, z) o (id, vector3).
+--- Deja de seguir a la entidad, si seguía a alguna. Un emisor 2D no puede pasar a tener sitio: el CEF
+--- le montó el grafo sin panner, así que eso pide un `play` nuevo.
+function kec.audio:position(id, x, y, z)
+    local src = sources[tostring(id)]
+    if not src or not src.spatial then return end
+
+    if type(x) ~= "number" then
+        if not x then return end
+        x, y, z = x.x, x.y, x.z
+    end
+
+    src.coords = { x = x + 0.0, y = y + 0.0, z = z + 0.0 }
+    src.entity, src.netId = nil, nil
+end
+
+--- Que el emisor siga a una entidad, lo contrario de `position`. Mismo aviso: 2D no pasa a 3D.
+---@param id string
+---@param entity number
+function kec.audio:attach(id, entity)
+    local src = sources[tostring(id)]
+    if not src or not src.spatial then return end
+
+    src.coords, src.netId = nil, nil
+    src.entity = entity
+end
+
+--- Los ids de los emisores vivos en este cliente.
+---
+--- Es lo que necesita un recurso que arranca —o que se reinicia— para engancharse a emisores que ya
+--- existían: de esos no va a llegar ningún `kec:audio:started`, porque el aviso pasó antes de que él
+--- estuviera escuchando.
+---@return string[]
+function kec.audio:list()
+    local ids, n = {}, 0
+
+    for id in pairs(sources) do
+        n = n + 1
+        ids[n] = id
+    end
+
+    return ids
 end
 
 --- Para un emisor y se lleva su <audio> del CEF.
 ---@param id string
 function kec.audio:stop(id)
-    local src = sources[tostring(id)]
+    id = tostring(id)
+    local src = sources[id]
     if not src then return end
 
-    sources[tostring(id)] = nil
+    sources[id] = nil
 
     if src.spatial then
         spatialCount = spatialCount - 1
         syncTick()
     end
 
-    SendNUIMessage({ action = "audio", op = "stop", id = tostring(id) })
+    SendNUIMessage({ action = "audio", op = "stop", id = id })
+    TriggerEvent(EV_STOPPED, id)
 end
 
 --- Para todos. Lo usa el servidor al vaciar el mundo, y el volumen general no se toca.
 function kec.audio:stopAll()
+    local ids = {}
+    for id in pairs(sources) do ids[#ids + 1] = id end
+
     sources = {}
     spatialCount = 0
     syncTick()
     SendNUIMessage({ action = "audio", op = "stopAll" })
+
+    -- Uno por uno y no un aviso a secas: al que sigue la oclusión de SU emisor le da igual que se
+    -- hayan parado los demás, y así el que escucha no tiene que saber qué había vivo.
+    for _, id in ipairs(ids) do TriggerEvent(EV_STOPPED, id) end
 end
 
 --- Volumen de UN emisor, 0..1. Es relativo al general del jugador.

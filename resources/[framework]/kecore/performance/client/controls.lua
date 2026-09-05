@@ -414,6 +414,19 @@ function controls:disableMultiple(padIndex, controlList, disable)
     end
 end
 
+--- Habilita múltiples controles pasando una tabla o un control único.
+function controls:enableMultiple(padIndex, controlList, enable)
+    local pad = padIndex or 0
+    local toggle = enable == nil and true or enable
+    if type(controlList) == "table" then
+        for i = 1, #controlList do
+            EnableControlAction(pad, controlList[i], toggle)
+        end
+    else
+        EnableControlAction(pad, controlList, toggle)
+    end
+end
+
 --- Deshabilita un rango correlativo de controles [fromControl, toControl].
 function controls:disableRange(padIndex, fromControl, toControl, disable)
     local pad = padIndex or 0

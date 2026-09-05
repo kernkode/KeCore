@@ -65,74 +65,22 @@ kec = setmetatable(exports[name_resource]:get() or {}, {
     __index = function() return {} end
 })
 
+-- Modo desarrollo. Se lee del convar y NO de lo que trae `get()`: la tabla de arriba lleva un
+-- __index que devuelve {} para lo que no existe, y un {} es truthy — con un kecore viejo, un
+-- `if kec.dev then` dejaría suelto en producción justo lo que se quería quitar. El convar lo
+-- pone el devkit desde DEV_MODE (.env) y kecore lo replica al cliente.
+local devConvar = GetConvar("kec_dev", "0")
+kec.dev = devConvar == "1" or devConvar == "true"
+
 -- Estado compartido entre recursos: copia local de los valores (leer = acceso a
 -- tabla, sin salto entre runtimes) y las escrituras se replican por evento del lado,
--- así todos convergen y los onChange saltan en todos. Ver internal/shared/core.lua.
-local STATE_SYNC = "kec:state:sync"
-local thisResource = GetCurrentResourceName()
-
+-- así todos convergen y los onChange saltan en todos. Ver internal/shared/state.lua.
+--
 -- Foto inicial: un recurso que arranca después de kecore no debe empezar a ciegas.
 -- pcall porque `bun run update:core` puede traer un kecore sin este export y no
 -- vale la pena tumbar el arranque del recurso entero por eso.
 local okSnapshot, snapshot = pcall(function() return exports[name_resource]:stateSnapshot() end)
 local stateValues = (okSnapshot and type(snapshot) == "table") and snapshot or {}
-local stateListeners = {}
-
-local function applyState(key, value)
-    local oldValue = stateValues[key]
-    if oldValue == value then return false end
-    stateValues[key] = value
-
-    local listeners = stateListeners[key]
-    if listeners then
-        for i = #listeners, 1, -1 do
-            pcall(listeners[i], value, oldValue)
-        end
-    end
-    return true
-end
-
-local stateObj = setmetatable({}, {
-    __index = function(_, key)
-        return stateValues[key]
-    end,
-    __newindex = function(_, key, value)
-        if applyState(key, value) then
-            TriggerEvent(STATE_SYNC, key, value, thisResource)
-        end
-    end
-})
-
-AddEventHandler(STATE_SYNC, function(key, value, from)
-    if from ~= thisResource then applyState(key, value) end
-end)
-
-function stateObj:get(key)
-    return stateValues[key]
-end
-
-function stateObj:set(key, value)
-    stateObj[key] = value
-end
-
-function stateObj:onChange(key, callback)
-    if type(callback) ~= "function" then return function() end end
-    stateListeners[key] = stateListeners[key] or {}
-    table.insert(stateListeners[key], callback)
-
-    return function()
-        if stateListeners[key] then
-            for i, cb in ipairs(stateListeners[key]) do
-                if cb == callback then
-                    table.remove(stateListeners[key], i)
-                    break
-                end
-            end
-        end
-    end
-end
-
-kec.state = stateObj
 
 metadata = kec.metadata or {
     player = {},
@@ -149,14 +97,15 @@ if context == "client" then
     })
 
     kec.audio = facade("audio", {
-        "play", "stop", "stopAll", "setVolume", "setMasterVolume", "getMasterVolume"
+        "play", "stop", "stopAll", "occlusion", "flat", "position", "attach", "list",
+        "setVolume", "setMasterVolume", "getMasterVolume"
     })
 
     AddEventHandler("kec:onPlayerLoaded", function()
         kec.isWorldLoaded = true
     end)
 else
-    kec.audio = facade("audio", { "play", "stop", "list", "resolve" })
+    kec.audio = facade("audio", { "play", "stop", "list", "resolve", "search" })
 end
 
 local function print_debug(text, ...)
@@ -183,9 +132,25 @@ local function loadModule(name)
     return compiled(), nil
 end
 
+-- Estado compartido entre recursos. La implementación es la MISMA que corre dentro de kecore
+-- (internal/shared/state.lua → performance/shared/state.lua): se compila aquí en vez de
+-- inyectarse con `injectModule` porque `kec.state` es una tabla CON metatabla —el
+-- `kec.state.x = 1` de las llamadas— y la inyección copia clave por clave, que se la come.
+-- Antes esto era una segunda copia del módulo escrita a mano en este archivo, y las dos ya
+-- habían empezado a divergir.
+local stateFactory, stateErr = loadModule("performance/shared/state")
+
+if type(stateFactory) == "function" then
+    kec.state = stateFactory(stateValues)
+else
+    print(("^1[kecore] no se pudo cargar el estado compartido (%s): kec.state queda vacío^7")
+        :format(tostring(stateErr)))
+    kec.state = { get = function() end, set = function() end, onChange = function() return function() end end }
+end
+
 ---@param module table
 ---@param path string
-function injectModule(module, path)
+local function injectModule(module, path)
     for k, inject in pairs(module) do
         if path == "/" then
             print_debug("Injecting: " .. k)
@@ -226,11 +191,13 @@ for _, data in ipairs(chunks) do
     end
 end
 
--- Evaluación final: Un solo mensaje de éxito, o el reporte de errores
+-- Evaluación final: en silencio si todo cargó (DEBUG lo cuenta), y el fallo SIEMPRE en consola.
+-- Un módulo que no carga deja al recurso sin la mitad del framework: eso no puede depender de un
+-- flag de debug (la cabecera del error iba por print_debug y no salía nunca).
 if all_loaded then
     print_debug("^2[kecore] %d modules loaded correctly on side %s.^0", loaded_count, context)
 else
-    print_debug("^1[kecore] CRITICAL ERROR: One or more modules failed to load:^0")
+    print("^1[kecore] ERROR: uno o más módulos no cargaron:^0")
     for _, errMsg in ipairs(errors) do
         print("^1  " .. errMsg .. "^0")
     end
