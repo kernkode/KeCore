@@ -1,0 +1,23 @@
+# Configuración de Bun para el devkit.
+#
+# `bun run` solo lee el bunfig del directorio desde el que se lanza (no busca hacia arriba ni mira
+# el global), así que esto aplica a lo que se ejecute desde la raíz del repo — que es todo lo de
+# `package.json`. Las SPA de `resources/**/svelte-src` corren con su propio cwd y no lo ven.
+
+[run]
+# El FXServer es un hijo de este proceso. Sin esto, un devkit muerto a lo bruto —cerrar la consola,
+# Ctrl+Break, el botón de stop del IDE— lo dejaba vivo con los puertos del juego cogidos, y el
+# arranque siguiente se iba por el `process.exit(1)` del chequeo de puertos de serverManager. En
+# Windows Bun lo resuelve con un Job Object kill-on-close, así que se lleva TODOS los descendientes
+# (el FXServer, los vite de las SPA, el yt-dlp que estuviera resolviendo una pista).
+#
+# Vale también para `bun scripts/algo.ts` y no solo para `bun run <script>`: los ajustes de [run]
+# aplican igual cuando se ejecuta un fichero.
+noOrphans = true
+
+[install]
+# Nada recién publicado: tres días de cuarentena para cualquier versión que venga de npm. Los
+# secuestros de paquetes se consumen en las primeras horas y aquí no hay ninguna prisa por estar al
+# día. No afecta a un `bun install` con el lockfile puesto (ahí no se resuelve nada), solo a lo que
+# se añada o actualice; si algún día hace falta algo del mismo día, `--minimum-release-age=0`.
+minimumReleaseAge = 259200

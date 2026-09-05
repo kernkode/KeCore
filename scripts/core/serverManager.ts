@@ -3,7 +3,6 @@ import fs from 'fs';
 import fkill from 'fkill';
 import chalk from 'chalk';
 import { spawn, ChildProcess, exec } from 'child_process';
-import { LRUCache } from 'lru-cache';
 import { log, writeToLog, clearLogFile } from './logger.ts';
 import { CWD, FXSERVER_EXECUTABLE, AUDIO_CONFIG } from './configs.ts';
 import net from 'net';
@@ -14,15 +13,10 @@ interface EsbuildContext {
 }
 
 export const esbuildContexts = new Map<string, EsbuildContext>();
-export const resourceRootCache = new LRUCache<string, string>({
-    max: 100,
-    ttl: 1000 * 60 * 5  // 5 minutos
-});
-export const pendingRestarts = new Set<string>();
-const configCache = new LRUCache<string, string>({
-    max: 10,
-    ttl: 1000 * 60 * 2  // 2 minutos
-});
+// Un Map pelado: son rutas de ficheros del repo apuntando a su carpeta de recurso, se limpia en
+// cada `restart()` y el árbol no cambia de sitio mientras el devkit corre.
+// ponytail: sin tope ni caducidad; si algún día crece de verdad, una LRU.
+export const resourceRootCache = new Map<string, string>();
 
 // Verifica si un puerto está en uso
 async function isPortInUse(port: string | number): Promise<boolean> {
@@ -123,7 +117,12 @@ class ServerManager {
                 // probar en local. Con txAdmin no se pasan argumentos: ahí van los tres `set` a
                 // mano en server.cfg.
                 '+set', 'audio_api_url', `http://127.0.0.1:${AUDIO_CONFIG.port}`,
-                '+set', 'audio_api_key', process.env.API_KEY || ''
+                '+set', 'audio_api_key', process.env.API_KEY || '',
+                // Modo desarrollo: kecore lo lee en internal/shared/core.lua, lo replica a los
+                // clientes y lo deja como `kec.dev` en todos los recursos. Va aquí y no en
+                // server.cfg para que una copia de producción, que arranca sin el devkit, no lo
+                // tenga nunca; si falta, `kec.dev` es false.
+                ...(process.env.DEV_MODE?.toLowerCase() === 'true' ? ['+set', 'kec_dev', '1'] : [])
             ];
 
             const spawnArgs = useTxAdmin ? [] : [...commonArgs];
@@ -177,9 +176,15 @@ class ServerManager {
         if (this.childProcess && this.childProcess.pid) {
             log("Stopping server...", { resourceColor: chalk.hex('#1abc9c') });
             this.flushLogs();
-            clearInterval(this.logFlushInterval);
             await fkill(this.childProcess.pid, { force: true, silent: true }).catch(() => {});
         }
+
+        // A null, y el interval de logs sigue vivo: `fkill` mata el proceso desde FUERA, así que
+        // `childProcess.killed` se queda en false y `isRunning()` mentía después de un /api/stop
+        // (y con ella /api/status y sendCommand). El clearInterval que había aquí, además, dejaba
+        // el volcado a cache/log.txt muerto para siempre: un /api/start después no volvía a
+        // escribir nada. El interval se para en shutdown(), que es cuando se va el proceso.
+        this.childProcess = null;
     }
     
     /** Envía un comando a la consola de FXServer. */
@@ -227,7 +232,7 @@ class ServerManager {
                     
                     // Limpieza adicional para Windows
                     if (process.platform === "win32") {
-                        await fkill('FXServer.exe', { force: true, silent: true });
+                        await fkill(path.basename(FXSERVER_EXECUTABLE), { force: true, silent: true });
                     }
                 } catch (killError: any) {
                     log(`Error al forzar cierre: ${killError.message}`, { resourceColor: chalk.red });
@@ -286,11 +291,14 @@ class ServerManager {
         if (this.isShuttingDown) return;
         this.isShuttingDown = true;
         log("Closing services...");
-    
+
+        this.flushLogs();
+        clearInterval(this.logFlushInterval);
+
         const disposePromises = Array.from(esbuildContexts.values()).map(ctx => ctx.dispose());
         await Promise.all(disposePromises);
         log("Cleaned compilation contexts.", { resourceColor: chalk.yellow });
-    
+
         if (this.isRunning() && this.childProcess?.pid) {
             await fkill(this.childProcess.pid, { force: true, silent: true });
             log("Server process completed.", { resourceColor: chalk.yellow });
@@ -300,35 +308,21 @@ class ServerManager {
 
     /** Reinicia un recurso en el servidor. */
     async restartResource(resourceName: string): Promise<void> {
-        if (pendingRestarts.has(resourceName)) return;
-        pendingRestarts.add(resourceName);
-        
-        try {
-            log(`Restarting...`, { resourceName, resourceColor: chalk.yellow });
-            await this.sendCommand(`ensure ${resourceName}`);
-        } finally {
-            pendingRestarts.delete(resourceName);
-        }
+        log(`Restarting...`, { resourceName, resourceColor: chalk.yellow });
+        await this.sendCommand(`ensure ${resourceName}`);
     }
 
     editConfig(name: string, value: string): void {
         const serverCfgPath = path.resolve('server.cfg');
-        
+
         try {
-            // 1. Obtener datos (Cache o Disco)
-            let data: string;
-            if (configCache.has(serverCfgPath)) {
-                data = configCache.get(serverCfgPath)!;
-            } else {
-                if (!fs.existsSync(serverCfgPath)) {
-                    log(`server.cfg not found in: ${serverCfgPath}`, { resourceColor: chalk.red });
-                    return;
-                }
-                data = fs.readFileSync(serverCfgPath, 'utf8');
-                configCache.set(serverCfgPath, data);
+            if (!fs.existsSync(serverCfgPath)) {
+                log(`server.cfg not found in: ${serverCfgPath}`, { resourceColor: chalk.red });
+                return;
             }
-            
-            // 2. Crear Expresión Regular
+
+            const data = fs.readFileSync(serverCfgPath, 'utf8');
+
             // Explicación del Regex:
             // ^          -> Inicio de línea (gracias al flag 'm')
             // (\s*)      -> Grupo 1: Captura indentación (espacios/tabs) antes del nombre
@@ -336,31 +330,23 @@ class ServerManager {
             // (?:\s+|$)  -> Debe haber un espacio después del nombre O fin de línea (evita falsos positivos como 'set' vs 'sets')
             // .* -> El resto de la línea (el valor antiguo)
             const regex = new RegExp(`^(\\s*)${name}(?:\\s+|$).*`, 'm');
-            
+
             let newData: string;
 
             if (regex.test(data)) {
-                // 3. CASO A: El parámetro YA EXISTE -> Reemplazar
-                // $1 mantiene la indentación original
+                // El parámetro YA EXISTE -> Reemplazar. $1 mantiene la indentación original
                 newData = data.replace(regex, `$1${name} ${value}`);
             } else {
-                // 4. CASO B: El parámetro NO EXISTE -> Agregar al final
-                // Asegurar que haya un salto de línea antes de agregar
+                // NO EXISTE -> Agregar al final, asegurando el salto de línea previo
                 const prefix = data.endsWith('\n') ? '' : '\n';
                 newData = `${data}${prefix}${name} ${value}\n`;
             }
-            
-            // 5. Guardar solo si hubo cambios
+
             if (newData !== data) {
                 fs.writeFileSync(serverCfgPath, newData, 'utf8');
-                configCache.set(serverCfgPath, newData); // Actualizar caché
-                // Opcional: Loguear el cambio
-                // log(`Config ${name} actualizada a ${value}`, { resourceColor: chalk.cyan });
             }
-            
         } catch (err: any) {
             console.error('Error editing server.cfg:', err);
-            configCache.delete(serverCfgPath); // Invalidar caché en caso de error
         }
     }
 }

@@ -109,6 +109,8 @@ function transform(mod: PerfModule, src: string): string {
         case 'flat':       return transformFlat(normalized, mod.name);
         case 'native':     return transformNative(normalized, mod.name);
         case 'extension':  return transformExtension(normalized, mod.name);
+        // Already a standalone chunk that returns its own value: nothing to rewrite.
+        case 'chunk':      return `${normalized.trimEnd()}\n`;
     }
 }
 

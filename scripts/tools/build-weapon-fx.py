@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-    Regenera resources/[assets]/weapon_meta/custom/ entera: los .meta de armas del
+    Regenera resources/[weapons]/weapon_meta/custom/ entera: los .meta de armas del
     server con el bloque <Fx> del pack de armas (weapon.rar), y verifica que lo unico
     que cambia respecto al dump vanilla de data/ es ese bloque.
 
@@ -33,7 +33,7 @@ ap.add_argument('--probe', action='store_true', help='marcar TimeBetweenShots co
 args = ap.parse_args()
 
 PACKD = args.pack.replace('\\', '/')
-META  = os.path.join(RES, '[assets]', 'weapon_meta')
+META  = os.path.join(RES, '[weapons]', 'weapon_meta')
 DATA  = os.path.join(META, 'data').replace('\\', '/')
 CUST  = (args.out or os.path.join(META, 'custom')).replace('\\', '/')
 BASE  = DATA + '/base/weapons.meta'
@@ -163,6 +163,43 @@ def patch_stats(block, fields):
     return block
 
 
+CLIP_ITEM = re.compile(r'<Item>\s*<Name>(COMPONENT_\w+)</Name>\s*<Default value="[^"]*" />\s*</Item>')
+
+
+def patch_default_clip(block, component):
+    """devuelve el bloque del arma con `component` como cargador de serie.
+
+    De los <Components> del arma se pone <Default value="true"/> en ese CLIP_* y "false" en
+    los demas; el resto de componentes (supresores, miras) no se toca. Igual que patch_stats,
+    solo cambia lo de dentro de las comillas.
+    """
+    vistos = []
+
+    def uno(m):
+        nombre = m.group(1)
+        vistos.append(nombre)
+        if '_CLIP_' not in nombre: return m.group(0)
+        quiero = 'true' if nombre == component else 'false'
+        return re.sub(r'(<Default value=")[^"]*(")', r'\g<1>%s\g<2>' % quiero, m.group(0))
+
+    block = CLIP_ITEM.sub(uno, block)
+    if component not in vistos: raise SystemExit('DEFCLIP: %s no esta en el arma' % component)
+    return block
+
+
+def con_defclip(lines, component):
+    """las lineas del vanilla con el mismo cambio, para poder comparar (ver verificacion)"""
+    out, cur = [], None
+    for l in lines:
+        m = re.match(r'<Name>(COMPONENT_\w+)</Name>$', l)
+        if m: cur = m.group(1)
+        if cur and '_CLIP_' in cur and l.startswith('<Default value='):
+            l = '<Default value="%s" />' % ('true' if cur == component else 'false')
+        out.append(l)
+    return out
+
+
+
 def comment(paras):
     body = '\n\n'.join(textwrap.fill(' '.join(x.split()), width=96,
                                      initial_indent='     ', subsequent_indent='     ')
@@ -209,6 +246,27 @@ AUDIO = {'WEAPON_APPISTOL': 'AUDIO_ITEM_PISTOL'}   # la Glock necesita el audio 
 #                        tres pistolas: 0.01 la PISTOL y la PISTOL50, 0.005 la COMBATPISTOL
 STATS = {}
 
+# Cargador de serie, arma por arma. El <ClipSize> del ARMA solo manda cuando no lleva ningun
+# componente de cargador puesto, y el CLIP_01 va de serie en todas las armas de fuego, asi que
+# la capacidad real de la recamara es la del COMPONENTE. Y esos <ClipSize> viven en
+# weaponcomponents.meta, que este server no carga (haria falta un WEAPONCOMPONENTSINFO_FILE, y
+# el blob lleva refs a su propio <Data>: RELOAD_DEFAULT y compania). Para subir la recamara sin
+# eso se pone de serie otro componente de cargador que YA exista con mas capacidad.
+DEFCLIP = {
+    # La P90 ([weapons]/P90) lleva cargador de 50 y el CLIP_01 del ASSAULTSMG es de 30: con el
+    # de serie, de las 50 balas del item solo 30 entraban en la recamara y las otras 20 caian
+    # en la reserva. El CLIP_02 es de 60, o sea que las 50 entran de una sola vez.
+    #
+    # Su modelo es el W_SB_ASSAULTSMG_Mag2, que el recurso de la P90 envia VACIO (el cargador
+    # de la P90 va modelado en el cuerpo), asi que no se ve ningun cargador pegado. Y el item
+    # `at_clip_extended_rifle` del inventario tiene vetada esta arma con `noAttach`, asi que
+    # nadie sube de 50: las 60 de la recamara son solo el techo, el tope lo pone el item.
+    #
+    # Efecto de paso: el CLIP_02 lleva bShownOnWheel="true", asi que la rueda de armas ensenya
+    # el cargador ampliado como puesto.
+    'WEAPON_ASSAULTSMG': 'COMPONENT_ASSAULTSMG_CLIP_02',
+}
+
 # ---------------------------------------------------------------- indices
 ours = sorted(set(re.findall(r'weapon = "(WEAPON_[A-Z0-9_]+)"', read(CONF))))
 pack = {}
@@ -244,6 +302,12 @@ for w in ours:
 base_ws = [w for w in todo if van[w][1] == 'base/weapons.meta']
 print('armas: %d (%d base, %d de dlc)' % (len(todo), len(base_ws), len(todo) - len(base_ws)))
 
+# STATS y DEFCLIP solo se aplican a las armas que este script escribe. Si se pone un retoque en
+# un arma que no entra en `todo` (porque el pack no le cambia el <Fx>) no pasaria nada en
+# absoluto, asi que se aborta en vez de dejarlo pasar en silencio.
+huerfanas = sorted((set(STATS) | set(DEFCLIP)) - set(todo))
+if huerfanas: raise SystemExit('STATS/DEFCLIP de armas que este script no escribe: %s' % huerfanas)
+
 P_FX  = (u'con los efectos del %(src)s del pack weapon.rar en el bloque <Fx>: fogonazo muz_stungun, '
          u'humo de minigun, sin trazadoras (el <TracerFx> vacio del pack y, por si eso solo no basta, '
          u'las dos <TracerFxChance> a 0) y el FlashFxScale del pack (el fogonazo del stungun es grande '
@@ -259,13 +323,18 @@ P_NEW  = (u'%s no esta en el pack (es posterior a 2019), asi que su <Fx> sale de
           u'calibre y de tamanyo de fogonazo.')
 P_MK2  = (u'El weapons_%s_mk2.meta del pack es vanilla sin tocar (fogonazo muz_alternate_star y sin '
           u'humo), asi que el mk2 coge el <Fx> de su hermana base.')
-P_AP   = (u'El appistol es la Glock 18C de [assets]/Glock18C: su <Fx> sale del MACHINEPISTOL del pack, '
+P_AP   = (u'El appistol es la Glock 18C de [weapons]/Glock18C: su <Fx> sale del MACHINEPISTOL del pack, '
           u'pedido a mano, y su <Audio> pasa de AUDIO_ITEM_APPISTOL a AUDIO_ITEM_PISTOL, que es el '
           u'unico de los dos que reemplaza [gameplay]/weapon_sounds.')
 P_STATS = (u'El %s lleva ademas los retoques de balance de STATS en el script: RecoilAccuracyMax, '
            u'RecoilErrorTime e IkRecoilDisplacement, que es de donde sale el retroceso que nota el '
            u'jugador (el RecoilShakeAmplitude es solo temblor de camara, y encima lo pisa en caliente '
            u'[gameplay]/inventory con el `recoil` de su config).')
+P_CLIP  = (u'Al %s se le cambia el cargador de serie a %s (el DEFCLIP del script): el <ClipSize> del '
+           u'arma solo cuenta si no lleva componente de cargador, y el de serie es de 30 cuando esa '
+           u'arma necesita mas. El <ClipSize> de un componente vive en weaponcomponents.meta, que no '
+           u'se carga aqui, asi que en vez de parchearlo se pone de serie un cargador que ya existe '
+           u'con la capacidad que hace falta.')
 
 # ---------------------------------------------------------------- generacion
 if not os.path.isdir(CUST): os.makedirs(CUST)
@@ -284,10 +353,13 @@ for nm, s, e, a, b in sorted(its, key=lambda x: -x[1]):
         item = re.sub(r'<Audio>\w+</Audio>', '<Audio>%s</Audio>' % AUDIO[nm], item, count=1)
     if nm in STATS:
         item = patch_stats(item, STATS[nm])
+    if nm in DEFCLIP:
+        item = patch_default_clip(item, DEFCLIP[nm])
     t = t[:s] + item + t[end:]
 
 extra = [P_AP] if any(w in AUDIO for w in base_ws) else []
 extra += [P_STATS % w[7:] for w in base_ws if w in STATS]
+extra += [P_CLIP % (w[7:], DEFCLIP[w][10:]) for w in base_ws if w in DEFCLIP]
 srcs = ', '.join(sorted(set(SRC.get(w, w)[7:] for w in base_ws)))
 paras = [P_GEN,
          u'Copia del weapons.meta base vanilla de GTA V 1.0.3889.0 (data/base/weapons.meta) '
@@ -309,12 +381,15 @@ for path, ws in sorted(porfile.items()):            # arma de DLC -> copia de su
         item = patch_fx(t[s:end], fx_map(pack[SRC.get(nm, nm)], SRC.get(nm, nm)), args.probe)
         if nm in STATS:
             item = patch_stats(item, STATS[nm])
+        if nm in DEFCLIP:
+            item = patch_default_clip(item, DEFCLIP[nm])
         t = t[:s] + item + t[end:]
     extra = []
     for w in ws:
         if w in NUEVAS:                 extra.append(P_NEW % (w[7:], SRC[w][7:]))
         if w.endswith('_MK2') and w in SRC: extra.append(P_MK2 % w[7:-4].lower())
         if w in STATS:                  extra.append(P_STATS % w[7:])
+        if w in DEFCLIP:                extra.append(P_CLIP % (w[7:], DEFCLIP[w][10:]))
     srcs = ', '.join(sorted(set(SRC.get(w, w)[7:] for w in ws)))
     paras = [P_GEN, u'Copia del %s vanilla de GTA V 1.0.3889.0 (data/%s) ' % (
              os.path.basename(path), van[ws[0]][1]) + P_FX % {'src': srcs}, P_VAN] + extra
@@ -366,6 +441,8 @@ for fn, ws in hechos:
                     if ('<%s value=' % tag) in l: return patch_stats(l, {tag: value})
                 return l
             a1 = [con_stats(l) for l in a1]
+        if w in DEFCLIP:
+            a1 = con_defclip(a1, DEFCLIP[w])
         if args.probe:
             a1 = [l for l in a1 if not l.startswith('<TimeBetweenShots ')]
             b1 = [l for l in b1 if not l.startswith('<TimeBetweenShots ')]

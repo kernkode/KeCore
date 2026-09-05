@@ -17,8 +17,13 @@
  *   - 'extension': internal extends an existing namespace such as `kec.vehicle`
  *     but must keep shared refs (`kec.vehicle.state`, etc.) pointing at the
  *     already-captured framework table.
+ *   - 'chunk': copied through untouched (only CRLF is normalized). For sources
+ *     that are already standalone chunks returning their own value — a factory,
+ *     say — and are therefore loaded and CALLED by hand instead of going through
+ *     `injectModule`. `shared/state.lua` is the case: `kec.state` is a table with
+ *     a metatable, and key-by-key injection would drop it.
  */
-export type PerfMode = 'namespaced' | 'flat' | 'native' | 'extension';
+export type PerfMode = 'namespaced' | 'flat' | 'native' | 'extension' | 'chunk';
 
 export interface PerfModule {
     /** Destination path relative to `resources/[framework]/kecore/performance/`. */
@@ -33,6 +38,11 @@ export interface PerfModule {
 export const PERF_MODULES: PerfModule[] = [
     // shared
     { out: 'shared/timers.lua',    src: 'shared/timers.lua',    name: 'timers',    mode: 'flat'       },
+    // NOT in init.lua's `chunks` list on purpose: this one is not injected. init.lua loads it and
+    // calls the factory with the state snapshot, because `kec.state` carries a metatable that
+    // `injectModule`'s key-by-key copy would drop. kecore itself loads the same generated chunk
+    // from internal/shared/core.lua, so both sides run byte-identical code.
+    { out: 'shared/state.lua',     src: 'shared/state.lua',     name: 'state',     mode: 'chunk'      },
     { out: 'shared/base64.lua',    src: 'shared/base64.lua',    name: 'base64',    mode: 'namespaced' },
     { out: 'shared/zod.lua',       src: 'shared/zod.lua',       name: 'zod',       mode: 'namespaced' },
     { out: 'shared/lzwson.lua',    src: 'shared/lzwson.lua',    name: 'lzwson',    mode: 'namespaced' },

@@ -1,13 +1,7 @@
-import axios, { AxiosInstance, AxiosResponse } from 'axios';
 import path from 'path';
-import fs from 'fs';
 import fsp from 'fs/promises';
 import crypto from 'crypto';
-import { promisify } from 'util';
-import { pipeline } from 'stream';
 import chalk from 'chalk';
-
-const pipelineAsync = promisify(pipeline);
 
 const GITHUB_USER = 'kernkode';
 const GITHUB_REPO = 'KeCore';
@@ -61,14 +55,21 @@ interface SyncStats {
 }
 
 // ─── Cliente API ─────────────────────────────────────────
-const apiClient: AxiosInstance = axios.create({
-    baseURL: `https://api.github.com/repos/${GITHUB_USER}/${GITHUB_REPO}/`,
-    headers: {
-        'Accept': 'application/vnd.github.v3+json',
-        'User-Agent': 'Node.js GitHub Downloader'
-    },
-    timeout: 30000
-});
+const API_BASE = `https://api.github.com/repos/${GITHUB_USER}/${GITHUB_REPO}/`;
+
+/** Un GET a la API de GitHub, ya en JSON. Un 4xx/5xx lanza: `fetch` por su cuenta no. */
+async function apiGet<T>(endpoint: string): Promise<T> {
+    const response = await fetch(API_BASE + endpoint, {
+        headers: {
+            'Accept': 'application/vnd.github.v3+json',
+            'User-Agent': 'Node.js GitHub Downloader'
+        },
+        signal: AbortSignal.timeout(30000)
+    });
+
+    if (!response.ok) throw new Error(`GitHub respondió ${response.status} en ${endpoint}`);
+    return await response.json() as T;
+}
 
 // ─── SHA local (algoritmo de Git) ────────────────────────
 async function getLocalGitSha(filePath: string): Promise<string | null> {
@@ -93,15 +94,13 @@ async function getLocalGitSha(filePath: string): Promise<string | null> {
 async function getFullTree(): Promise<TreeItem[]> {
     console.log(chalk.cyan('🌳 Retrieving the complete repository tree (single request)...\n'));
 
-    const response: AxiosResponse<TreeResponse> = await apiClient.get(
-        `git/trees/${BRANCH}?recursive=1`
-    );
+    const tree = await apiGet<TreeResponse>(`git/trees/${BRANCH}?recursive=1`);
 
-    if (response.data.truncated) {
+    if (tree.truncated) {
         console.log(chalk.yellow('⚠️  Truncated tree (very large repository). Some files may be missing..'));
     }
 
-    return response.data.tree;
+    return tree.tree;
 }
 
 // ─── Filtrar archivos para UNA carpeta ───────────────────
@@ -125,16 +124,11 @@ function filterTreeToFolder(tree: TreeItem[], folder: SyncFolder): FileInfo[] {
 
 // ─── Descargar archivo ───────────────────────────────────
 async function downloadFile(url: string, filePath: string): Promise<void> {
-    await fsp.mkdir(path.dirname(filePath), { recursive: true });
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`${url} respondió ${response.status}`);
 
-    const response = await axios({
-        url,
-        method: 'GET',
-        responseType: 'stream'
-    });
-
-    const writer = fs.createWriteStream(filePath);
-    await pipelineAsync(response.data, writer);
+    // Bun.write crea los directorios que falten y escribe el cuerpo tal cual.
+    await Bun.write(filePath, response);
 }
 
 // ─── Procesar cada archivo ───────────────────────────────

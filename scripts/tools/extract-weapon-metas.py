@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
     Extrae de la instalacion local de GTA V todos los .meta de armas y los deja en
-    resources/[assets]/weapon_meta/data/, regenerando tambien su fxmanifest.lua.
+    resources/[weapons]/weapon_meta/data/, regenerando tambien su fxmanifest.lua.
 
     Los .rpf del juego van cifrados con NG, asi que la lectura la hace CodeWalker.Core.dll
     (saca las claves del propio GTA5.exe). La DLL es .NET Framework y se carga con pythonnet
@@ -24,7 +24,7 @@ ap.add_argument('--gta', default=None,
                 help='instalacion de GTA V (por defecto, la que usa FiveM: IVPath de CitizenFX.ini)')
 ap.add_argument('--codewalker', default=os.path.expanduser('~/Desktop/ALT-V TOOLS/CodeWalker30_dev47'),
                 help='carpeta que contiene CodeWalker.Core.dll')
-ap.add_argument('--out', default=os.path.join(REPO, 'resources', '[assets]', 'weapon_meta'),
+ap.add_argument('--out', default=os.path.join(REPO, 'resources', '[weapons]', 'weapon_meta'),
                 help='recurso destino')
 args = ap.parse_args()
 

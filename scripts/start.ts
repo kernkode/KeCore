@@ -7,7 +7,6 @@ import { generatePerformance } from './builder/gen-performance.ts';
 import { watcher } from './builder/watcher.ts';
 import { serverManager } from './core/serverManager.ts';
 import { isAvailableUpdate, downloadAndExtractFXServer } from './updater/utils.ts';
-import { environment } from './core/configs.ts';
 
 interface UpdateInfo {
     available: boolean;
@@ -42,6 +41,8 @@ async function main(): Promise<void> {
     );
   
     try {
+        // El .env lo carga Bun por su cuenta: si falta o está a medias, lo que se nota es que no
+        // hay variables, así que la comprobación de abajo es toda la que hace falta.
         const requiredEnvVars = ['FXSERVER', 'ENDPOINT_TCP', 'ENDPOINT_UDP'] as const;
 
         for (const varName of requiredEnvVars) {
@@ -49,11 +50,6 @@ async function main(): Promise<void> {
                 log(`❌ Missing required env var: ${varName}`, { resourceColor: chalk.red });
                 process.exit(1);
             }
-        }
-
-        if (environment.error) {
-            log(`❌ Error loading .env: ${environment.error}`);
-            process.exit(1);
         }
 
         log('✅ .env loaded successfully');

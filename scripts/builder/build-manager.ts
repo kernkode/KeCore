@@ -10,10 +10,9 @@ import {
     resourceRootCache,
 } from '../core/serverManager.ts';
 
-import { 
+import {
     RESOURCES_PATH,
     ESBUILD_OPTIONS,
-    INITIAL_BUILD_CONCURRENCY
 } from '../core/configs.ts';
 
 interface BuildResult {
@@ -93,7 +92,11 @@ class BuildManager {
     /** Handles a detected file change using debouncing. */
     async handleFileChange(filePath: string): Promise<void> {
         this.compilationQueue.add(filePath);
+        this.scheduleQueue();
+    }
 
+    /** (Re)arms the debounce timer that drains the queue. */
+    private scheduleQueue(): void {
         if (this.debounceTimer) clearTimeout(this.debounceTimer);
         this.debounceTimer = setTimeout(() => this.processQueue(), 100);
     }
@@ -153,6 +156,13 @@ class BuildManager {
         }
 
         this.isProcessingQueue = false;
+
+        // Los cambios que llegaron MIENTRAS compilábamos: el processQueue de su debounce se
+        // encontró `isProcessingQueue` y salió sin rearmar el timer, así que sin esto un guardado
+        // a mitad de build se quedaba en la cola hasta el guardado siguiente (hot-reload perdido).
+        if (this.compilationQueue.size > 0) {
+            this.scheduleQueue();
+        }
     }
 
     async compileResource(resourcePath: string): Promise<BuildResult> {
