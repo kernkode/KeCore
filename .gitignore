@@ -25,3 +25,4 @@ server.cfg.bkp
 .env
 /config.cfg
 /server.cfg
+/resources/\[framework\]/libs/dist
