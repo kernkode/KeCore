@@ -152,18 +152,21 @@ end)
 
 -- state bag handler to apply any deformation
 AddStateBagChangeHandler(state.DEFORMATION, nil, function(bagName, key, value, _unused, replicated)
-	if (bagName:find("entity") == nil) then return end
+	local entity = GetEntityFromStateBagName(bagName)
+	if not isValidVehicle(entity) then return end
 
-	deformation:applyDeformation(GetEntityFromStateBagName(bagName), value)
+	deformation:applyDeformation(entity, value)
 end)
 
 AddStateBagChangeHandler(state.REPAIR, nil, function(bagName, key, value, _unused, replicated)
-    if (bagName:find("entity") == nil or value == false) then return end
+    if value == false then return end
 
+    -- Same guard as every handler above: a change can land before this client has created the
+    -- vehicle, and then the entity is 0 — repairing it did nothing and told the server it was done.
     local entity = GetEntityFromStateBagName(bagName)
-    local vehicle = kec.vehicle:get(entity)
+    if not isValidVehicle(entity) then return end
 
-    vehicle:repair()
+    kec.vehicle:get(entity):repair()
     kec:emitServer("finishVehicleRepair", NetworkGetNetworkIdFromEntity(entity))
 end)
 

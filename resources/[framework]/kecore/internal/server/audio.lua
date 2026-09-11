@@ -9,7 +9,7 @@
 --      al arrancar, así que al que entra tarde —o al que reinicia kecore y pierde su CEF— se le
 --      manda la canción por donde va, no desde el principio.
 --
--- Vive SOLO en kecore y NO se transpila a performance/, por lo mismo que mongodb_registry.lua:
+-- Vive SOLO en kecore, fuera del catálogo local, por lo mismo que mongodb_registry.lua:
 -- la tabla `sources` de aquí tiene que ser la única copia. Si se inyectara, cada recurso llevaría
 -- su propio registro y ninguno sabría lo que están tocando los demás. Los consumidores llegan por
 -- el export del final, que @kecore/init.lua envuelve en un `kec.audio`.
@@ -34,12 +34,11 @@ local sources = {}
 --- Es el único sitio que hace la cuenta del reloj, y por eso vale igual para el primer envío que
 --- para el jugador que llega media canción después.
 --- Devuelve nil si es una pista de un solo pase que ya se ha terminado (solo se puede saber si
---- alguien dijo cuánto duraba).
+--- alguien dijo cuánto duraba); retirarla del registro es del barrido del final, que además avisa.
 local function payload(id, src)
     local elapsed = (GetGameTimer() - src.startedAt) / 1000.0
 
     if not src.loop and src.duration and elapsed > src.duration then
-        sources[id] = nil
         return nil
     end
 
@@ -177,6 +176,15 @@ function kec.audio:resolve(url, cb)
 
     local public = GetConvar("audio_public_url", api)
 
+    -- What ends up in the <audio> src has to work from ANOTHER machine, and by default it is the
+    -- internal one: a loopback host points at the listener's own PC, and plain http is auto-upgraded
+    -- to https as mixed content because kecore's page is https. Both end in silence with nothing to
+    -- read on this side, so say it here instead of leaving it in the player's F8.
+    if public:sub(1, 8) ~= "https://" then
+        kec.log:warn("kec.audio", "audio_public_url = %s — only the machine running the relay can " ..
+            "play that; everyone else needs an https URL that reaches it (see docs/AUDIO.md)", public)
+    end
+
     kec.axios:post(api .. "/api/audio/resolve", { url = url }, {
         -- Las cabeceras se pisan enteras (el merge de axios es plano), así que el Content-Type va
         -- también aquí o el POST sale sin él.
@@ -306,6 +314,22 @@ end)
 kec:on_player_disconnect(function(player)
     lastSync[player.id] = nil
 end)
+
+-- Retire a one-shot track that is over. `payload` already drops it, but only when someone happens to
+-- ask for a snapshot, and it drops it WITHOUT telling the clients that got it. That is fine for the
+-- ones playing it —their own CEF ends it— and a leak for the rest: an emitter pinned to a netId this
+-- client never streamed (a car parked out of range) never plays, so it never ends, so it kept asking
+-- the engine for that netId once a second forever, and the engine warns once per call.
+--
+-- ponytail: only what says how long it lasts can be retired. A live stream has no end and a loop is
+-- not supposed to have one, so those two stay until whoever put them calls `stop`.
+kec:setInterval(function()
+    for id, src in pairs(sources) do
+        if not src.loop and src.duration and (GetGameTimer() - src.startedAt) / 1000.0 > src.duration then
+            kec.audio:stop(id)
+        end
+    end
+end, 10000)
 
 -- Un export con el método dentro, no la tabla: al cruzar de recurso el `self` sería la copia del
 -- consumidor y los métodos perderían `sources` en silencio. Igual que label2d_nui.lua.

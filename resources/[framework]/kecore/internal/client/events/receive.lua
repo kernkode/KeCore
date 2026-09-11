@@ -21,7 +21,3 @@ end)
 kec:on("kec:clearProp", function(propId)
     native:clearProp(propId)
 end)
-
-kec:on("kec:setIntoVehicle", function(netId, seat)
-    native:warpIntoVehicle(netId, seat)
-end)

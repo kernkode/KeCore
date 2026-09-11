@@ -11,11 +11,41 @@ function player_methods:setCoords(x, y, z, rot)
     kec:emitClient("kec:setCoords", self.id, x, y, z, rot)
 end
 
+--- Seats the player in the vehicle from HERE: the server's `SetPedIntoVehicle` writes the seat into
+--- the sync data, so the client applies it the moment the entity reaches it. Sending this to the
+--- client meant waiting for the netId over there, and asking the engine for a netId that has not
+--- streamed in yet prints a warning per call (`GetNetworkObject: no object by ID`) — twenty a second
+--- for as long as the vehicle took to arrive.
+---
+--- One gap remains: a vehicle created an instant ago (the /veh case) can still be settling and
+--- without an owner client yet, and the seat write is lost in that window — the car spawns and
+--- nobody sits in it. So after the first try the seat is re-asserted for up to ~1s, warping again
+--- only while the ped is not in the vehicle yet. TaskWarpPedIntoVehicle over an already-seated ped
+--- is a no-op, so repeating it is safe; the check keeps it from churning once the seat took.
+---@param vehicle table|number a kec.vehicle instance, or an entity handle
 function player_methods:setIntoVehicle(vehicle, seat)
+    local entity = type(vehicle) == "table" and vehicle.entity or vehicle
+    if type(entity) ~= "number" or not DoesEntityExist(entity) then return end
+
     seat = seat or -1
-    local netId = type(vehicle) == "table" and vehicle.entity and NetworkGetNetworkIdFromEntity(vehicle.entity)
-        or type(vehicle) == "number" and NetworkGetNetworkIdFromEntity(vehicle) or vehicle
-    kec:emitClient("kec:setIntoVehicle", self.id, netId, seat)
+    local ped = self:ped()
+    SetPedIntoVehicle(ped, entity, seat)
+
+    local tries = 0
+    kec:setInterval(function(timer)
+        if IsPedInVehicle(ped, entity, false) then
+            kec:clearTimer(timer)
+            return
+        end
+
+        tries += 1
+        if tries > 8 then
+            kec:clearTimer(timer)
+            return
+        end
+
+        TaskWarpPedIntoVehicle(ped, entity, seat)
+    end, 120)
 end
 
 function player_methods:setVariation(componentId, drawableId, textureId, paletteId)

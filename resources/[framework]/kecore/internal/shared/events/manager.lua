@@ -60,7 +60,7 @@ local function register(name, callback, net, withSource)
     -- referencia y el handler acaba siendo de kecore. Al reiniciar el consumidor su callback se
     -- quedaba registrado apuntando a una VM muerta, y el siguiente TriggerEvent imprimía
     -- "Execution of function reference in script host failed".
-    local res = GetInvokingResource() or "this"
+    local res = GetInvokingResource() or GetCurrentResourceName()
     if not cache[res] then cache[res] = {} end
     table.insert(cache[res], handler)
 end
@@ -153,16 +153,31 @@ function kec:on_resource_start(handler)
     end)
 end
 
+-- Los handlers de parada de cada recurso, POR recurso. No van por `onLocal` como todo lo demás:
+-- el barrido del final es un handler de `onResourceStop` registrado al cargar kecore, o sea ANTES
+-- que el de cualquier consumidor, y quitar los handlers ahí dentro borraba de la lista de despacho
+-- el wrapper que iba a llamar a esta limpieza — Lua no visita una clave puesta a nil a mitad de un
+-- `pairs`, así que era una moneda al aire. De ahí salían los objetos colgados de un ped y los
+-- coches que se quedaban en el mundo al reiniciar. Llamándolos desde el mismo barrido el orden es
+-- fijo: primero la limpieza del recurso, después se le quitan los handlers.
+local stopHandlers = {}
+
 function kec:on_resource_stop(handler)
-    local invokingRes = GetInvokingResource()
-    self:onLocal("onResourceStop", function(resourceName)
-        if resourceName == invokingRes then
-            handler()
-        end
-    end)
+    local res = GetInvokingResource() or GetCurrentResourceName()
+    if not stopHandlers[res] then stopHandlers[res] = {} end
+    table.insert(stopHandlers[res], handler)
 end
 
 AddEventHandler("onResourceStop", function(resourceName)
+    for _, handler in ipairs(stopHandlers[resourceName] or {}) do
+        -- pcall: una limpieza que revienta no puede saltarse las demás ni el barrido de abajo.
+        local ok, err = pcall(handler)
+        if not ok then
+            print(("^1[events] ERROR en la limpieza de '%s': %s^7"):format(resourceName, err))
+        end
+    end
+    stopHandlers[resourceName] = nil
+
     for _, func in ipairs(cache[resourceName] or {}) do
         RemoveEventHandler(func)
     end

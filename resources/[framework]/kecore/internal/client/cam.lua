@@ -116,7 +116,7 @@ function kec.cam:new()
         end
 
         if filter.displayRadar ~= nil then
-            DisplayRadar(filter.displayRadar)
+            native:displayRadar(filter.displayRadar)
             self.filter.displayRadar = filter.displayRadar
         end
 
@@ -126,7 +126,7 @@ function kec.cam:new()
     --- Restaura configuraciones modificadas por flags
     function instance:restoreFilters()
         if self.filter.displayRadar == false then
-            DisplayRadar(true)
+            native:displayRadar(true)
             self.filter.displayRadar = nil
         end
     end
