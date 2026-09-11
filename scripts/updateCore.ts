@@ -193,9 +193,8 @@ async function syncFolder(
 
     console.log(chalk.cyan(`  📂 ${files.length} files found\n`));
 
-    // Crear directorios necesarios
-    const dirs = new Set(files.map(f => path.dirname(f.localPath)));
-    await Promise.all([...dirs].map(dir => fsp.mkdir(dir, { recursive: true })));
+    // Sin crear directorios por adelantado: Bun.write los crea al vuelo, y para un archivo suelto
+    // en la raíz el dirname es '.', que en Windows revienta con EEXIST.
 
     // Procesar en batches
     for (let i = 0; i < files.length; i += concurrency) {
