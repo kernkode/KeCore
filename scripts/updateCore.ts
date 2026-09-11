@@ -185,13 +185,21 @@ async function syncDependencies(): Promise<void> {
     for (const line of changed) console.log(chalk.yellow(`    🔄 [UPDATING]  ${line}`));
     await Bun.write(PACKAGE_JSON, JSON.stringify(local, null, 2) + '\n');
 
-    // `install` y no `update`: install se ciñe a lo que pide el package.json, mientras que update
-    // sube además todos los rangos y reescribe el lock, dejando cada máquina en otras versiones.
-    console.log(chalk.blue(`└─ 📦 bun install\n`));
-    const proc = Bun.spawn(['bun', 'install'], { stdout: 'inherit', stderr: 'inherit' });
+    // Los dos, en este orden. `install` deja exactamente lo que pide el package.json recién
+    // fusionado; `update` sube después lo que quepa en los rangos, que es la única forma de mover
+    // los transitivos —undici, saslprep y compañía— porque no están declarados en ninguna parte.
+    console.log(chalk.blue(`└─ 📦 bun install + bun update\n`));
+
+    if (await run('bun', 'install')) await run('bun', 'update');
+}
+
+/** Corre un comando con su salida a la vista. Devuelve si terminó bien. */
+async function run(...command: string[]): Promise<boolean> {
+    const proc = Bun.spawn(command, { stdout: 'inherit', stderr: 'inherit' });
     const code = await proc.exited;
 
-    if (code !== 0) console.log(chalk.red(`⚠️  bun install salió con ${code}`));
+    if (code !== 0) console.log(chalk.red(`⚠️  ${command.join(' ')} salió con ${code}`));
+    return code === 0;
 }
 
 // ─── Procesar cada archivo ───────────────────────────────
