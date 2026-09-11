@@ -1,4 +1,5 @@
 import bcrypt from "bcryptjs";
+import * as os from "os";
 import {
   MongoClient,
   Db,
@@ -62,9 +63,15 @@ try {
   const access = fsp.access.bind(fsp);
   fsp.access = (path: unknown, ...rest: unknown[]) => {
     if (path !== "/.dockerenv") return access(path, ...rest);
-    const denied = Promise.reject(new Error("ENOENT: fuera del sandbox de FXServer"));
-    denied.catch(() => {}); // la rejection ya tiene dueño; el driver la vuelve a capturar
-    return denied;
+
+    // El rechazo va en el turno SIGUIENTE y no en el momento de devolver la promesa. FXServer cuenta
+    // una promesa como huérfana en el instante en que se rechaza, así que con un `Promise.reject` ya
+    // rechazado el `catch` del driver —que llega después, cuando hace el `await`— no le quitaba el
+    // aviso: seguía saliendo el "Unhandled promise rejection in resource libs" con su stack. Estando
+    // PENDIENTE al devolverla, el orden se invierte: primero el dueño, después el rechazo.
+    return new Promise((_resolve, reject) => {
+      setTimeout(() => reject(new Error("ENOENT: fuera del sandbox de FXServer")), 0);
+    });
   };
 } catch {
   console.warn("⚠️ [MongoDB] No se pudo silenciar la sonda de contenedor del driver.");
@@ -76,13 +83,26 @@ const CONFIG = {
   URL: GetConvar("mongodb_url", "mongodb://localhost:27017"),
   DB_NAME: GetConvar("mongodb_database", "server"), // Configurable por variable
   OPTIONS: {
-    serverSelectionTimeoutMS: 5000,
+    // El plazo para ELEGIR servidor, que es el que cubre el arranque: mongod tarda más en estar listo
+    // que FXServer, y con 5 s la primera consulta moría por timeout justo antes de que la conexión se
+    // completara (auth preguntaba por el personaje y se llevaba un nil que no era verdad). El driver
+    // reintenta DENTRO de ese plazo, así que con la base lista en dos segundos no se espera más: lo
+    // único que cambia es que deja de fallar cuando tarda.
+    serverSelectionTimeoutMS: GetConvarInt("mongodb_server_selection_timeout_ms", 30000),
     connectTimeoutMS: GetConvarInt("mongodb_connect_timeout_ms", 5000),
     socketTimeoutMS: 45000,
     maxPoolSize: GetConvarInt("mongodb_max_pool_size", 10),
     minPoolSize: 1,
     monitorCommands: false,
     forceServerObjectId: false,
+    // El driver carga `os` con un `await import("os")` (lib/runtime_adapters.js), y en el bundle IIFE
+    // que corre dentro de FXServer ese import dinámico se queda literal y no resuelve nunca. Su
+    // promesa se rechaza, `makeClientMetadata` casca en su primera línea (`const { os } = await
+    // runtime`) y el handshake sale sin el sub-documento `driver`: entonces el servidor rechaza TODAS
+    // las operaciones con "Missing required sub-document 'driver' in the client metadata document",
+    // que no suena a esto en absoluto. El propio driver deja la puerta abierta para runtimes donde
+    // ese import falla — dándole el módulo ya cargado, el import dinámico ni se evalúa.
+    runtimeAdapters: { os },
     // family: 4 // Descomentar si tienes problemas con IPv6
   } as MongoClientOptions,
 };
@@ -166,6 +186,19 @@ function normalizeFilter(root: any): any {
   return toDates(walk(fixEmptyTable(root)));
 }
 
+
+function normalizeIndexKeys(keys: any): any {
+  const value = fixEmptyTable(keys);
+  if (!Array.isArray(value)) return value;
+
+  for (const pair of value) {
+    if (!Array.isArray(pair) || pair.length !== 2 || typeof pair[0] !== "string") {
+      throw new Error("createIndex keys must be ordered { { field, direction }, ... }");
+    }
+  }
+  return value;
+}
+
 /**
  * Normaliza las operaciones de bulkWrite. Cada op es `{ nombreOp: { ... } }`:
  * dentro, `filter` se normaliza como filtro (ObjectId bajo `_id`) y el resto
@@ -203,6 +236,8 @@ class MongoService {
   private client: MongoClient;
   private db: Db | null = null;
   private isConnected: boolean = false;
+  /** La conexión en marcha, para que los que lleguen a la vez esperen a la MISMA. */
+  private connecting: Promise<void> | null = null;
 
   private constructor() {
     this.client = new MongoClient(CONFIG.URL, CONFIG.OPTIONS);
@@ -214,6 +249,9 @@ class MongoService {
 
     this.client.on("close", () => {
       this.isConnected = false;
+      // La conexión compartida ya no vale: el siguiente que pida DB tiene que abrir de nuevo y no
+      // esperar a la promesa —ya cumplida— de la conexión que se acaba de caer.
+      this.connecting = null;
       console.log("🔌 [MongoDB] Conexión cerrada");
     });
 
@@ -234,13 +272,19 @@ class MongoService {
    * @param dbName Opcional, por si se quiere cambiar de DB dinámicamente
    */
   public async getDb(dbName: string = CONFIG.DB_NAME): Promise<Db> {
-    // Si no estamos conectados, conectar.
     if (!this.isConnected) {
-      await this.client.connect();
-      // Verificación inicial (solo al conectar, no en cada query)
-      this.db = this.client.db(dbName);
-      await this.db.command({ ping: 1 });
-      this.isConnected = true;
+      // UNA conexión para todos los que lleguen a la vez. Sin esto, cada operación del arranque
+      // —auth mirando el personaje, core cargando lo suyo— entraba aquí con `isConnected` en false y
+      // lanzaba su propio `connect` + `ping`, cada uno con su plazo de selección corriendo por su
+      // cuenta: el primero moría por timeout mientras la conexión de al lado se estaba completando.
+      if (!this.connecting) this.connecting = this.open(dbName);
+
+      try {
+        await this.connecting;
+      } finally {
+        // Si salió mal, el siguiente lo vuelve a intentar en vez de heredar el fallo de este.
+        if (!this.isConnected) this.connecting = null;
+      }
     }
 
     // Si cambiamos de DB o es la primera vez
@@ -251,11 +295,23 @@ class MongoService {
     return this.db;
   }
 
+  /** Conecta y comprueba que responde. Solo se llama desde `getDb`, una vez. */
+  private async open(dbName: string): Promise<void> {
+    await this.client.connect();
+
+    // Verificación inicial (solo al conectar, no en cada query)
+    this.db = this.client.db(dbName);
+    await this.db.command({ ping: 1 });
+    this.isConnected = true;
+  }
+
   public async disconnect(): Promise<void> {
     if (this.client) {
       await this.client.close();
       this.isConnected = false;
       this.db = null;
+      // Y la conexión compartida, fuera: si no, el siguiente `getDb` esperaría a una que ya se cerró.
+      this.connecting = null;
     }
   }
 
@@ -430,7 +486,9 @@ exports("aggregate", (col: string, pipeline: any[]) => {
 // options distintas devuelve error de Mongo (drop manual o collMod).
 exports("createIndex", (col: string, keys: any, options?: any) => {
   return execute(col, (c) =>
-    c.createIndex(fixEmptyTable(keys), fixEmptyTable(options)),
+    // Una tabla Lua no conserva el orden de campos; la lista de pares sí, y Mongo lo necesita
+    // porque { a: 1, b: 1 } y { b: 1, a: 1 } son índices distintos.
+    c.createIndex(normalizeIndexKeys(keys), fixEmptyTable(options)),
   );
 });
 
