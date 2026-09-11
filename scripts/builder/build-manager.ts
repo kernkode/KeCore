@@ -11,6 +11,7 @@ import {
 } from '../core/serverManager.ts';
 
 import {
+    CWD,
     RESOURCES_PATH,
     ESBUILD_OPTIONS,
 } from '../core/configs.ts';
@@ -45,11 +46,10 @@ class BuildManager {
         const failed = results.filter(r => r.status === 'rejected' || (r.status === 'fulfilled' && !r.value.success));
 
         if (failed.length > 0) {
-            log(`${failed.length}/${resourcePaths.length} resources failed. Review errors above.`,
-                { textColor: chalk.yellow });
-        } else {
-            log("All resources compiled successfully.", { textColor: chalk.hex('#89F336') });
+            throw new Error(`${failed.length}/${resourcePaths.length} resources failed to compile. Review errors above.`);
         }
+
+        log("All resources compiled successfully.", { textColor: chalk.hex('#89F336') });
     }
 
     /** Recursively searches for all resource directories. */
@@ -89,6 +89,45 @@ class BuildManager {
         return null;
     }
 
+    /** Resources that run '@kecore/init.lua', in the scripts.cfg ensure order. */
+    async findKecoreConsumers(): Promise<string[]> {
+        const cfg = await fs.readFile(path.join(CWD, 'scripts.cfg'), 'utf8');
+        const dirs = await this.findResourceDirs(RESOURCES_PATH);
+        const dirByName = new Map(dirs.map(dir => [path.basename(dir), dir]));
+
+        const consumers: string[] = [];
+        for (const [, name] of cfg.matchAll(/^\s*ensure\s+(\S+)/gm)) {
+            const dir = dirByName.get(name);
+            if (!dir || name === 'kecore') continue;
+            const manifest = await fs.readFile(path.join(dir, 'fxmanifest.lua'), 'utf8');
+            if (manifest.includes('@kecore/')) consumers.push(name);
+        }
+        return consumers;
+    }
+
+    /** Reloads kecore together with every resource that runs '@kecore/init.lua', in boot order. */
+    async reloadFramework(): Promise<void> {
+        const consumers = await this.findKecoreConsumers();
+        log(`Reloading kecore and its ${consumers.length} consumers`, {
+            resourceName: 'kecore',
+            textColor: chalk.magenta
+        });
+
+        // The consumers go down first, newest dependents before their dependencies: otherwise they
+        // are still running when kecore's VM dies and every funcref they hold into the framework
+        // blows up ("Execution of function reference in script host failed"). Stopping them while
+        // kecore is still up also keeps their on_resource_stop handlers working.
+        for (const name of [...consumers].reverse()) {
+            await serverManager.sendCommand(`stop ${name}`);
+        }
+        // init.lua and internal/modules/**.lua are `files` entries, and clients get what the server
+        // hashed at refresh time, so the manifest has to be re-read before anything starts again.
+        await serverManager.sendCommand('refresh');
+        for (const name of ['kecore', ...consumers]) {
+            await serverManager.sendCommand(`ensure ${name}`);
+        }
+    }
+
     /** Handles a detected file change using debouncing. */
     async handleFileChange(filePath: string): Promise<void> {
         this.compilationQueue.add(filePath);
@@ -117,7 +156,12 @@ class BuildManager {
             }
         }
 
-        for (const [root, changedFiles] of resourceGroups) {
+        const groups = Array.from(resourceGroups.entries());
+        // kecore's group goes first: it re-ensures every consumer, so a consumer that changed in
+        // the same batch never gets reloaded against the old framework VM.
+        groups.sort(([a], [b]) => Number(path.basename(b) === 'kecore') - Number(path.basename(a) === 'kecore'));
+
+        for (const [root, changedFiles] of groups) {
             const resourceName = path.basename(root);
             const resourceRelativePath = path.relative(RESOURCES_PATH, root);
 
@@ -128,6 +172,13 @@ class BuildManager {
 
             try {
                 let shouldRestart = false;
+
+                if (resourceName === 'kecore') {
+                    // A framework change is never a one-resource restart: the consumers keep
+                    // funcrefs into kecore's VM, so the whole set has to come back with it.
+                    await this.reloadFramework();
+                    continue;
+                }
 
                 if (changedFiles.some(f => f.endsWith('.ts'))) {
                     const { success } = await this.compileResource(resourceRelativePath);

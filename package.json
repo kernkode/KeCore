@@ -8,7 +8,6 @@
   },
   "scripts": {
     "dev": "bun scripts/start.ts",
-    "gen:performance": "bun scripts/builder/gen-performance.ts",
     "update:latest": "bun scripts/update.ts latest",
     "update:recommended": "bun scripts/update.ts recommended",
     "update:enhanced": "bun scripts/update.ts enhanced",

@@ -3,7 +3,6 @@ import { log } from './core/logger.ts';
 import { startRestAPI } from './core/api.ts';
 import { startAudioAPI } from './core/audio.ts';
 import { buildManager } from './builder/build-manager.ts';
-import { generatePerformance } from './builder/gen-performance.ts';
 import { watcher } from './builder/watcher.ts';
 import { serverManager } from './core/serverManager.ts';
 import { isAvailableUpdate, downloadAndExtractFXServer } from './updater/utils.ts';
@@ -64,7 +63,6 @@ async function main(): Promise<void> {
                 .catch((err: Error) => console.error('Critical error:', err));
         }
 
-        await generatePerformance();
         await buildManager.runInitialBuilds();
         await serverManager.start();
         await startRestAPI();
@@ -74,6 +72,15 @@ async function main(): Promise<void> {
         // Permitir entrada de comandos a la consola del servidor
         process.stdin.setEncoding('utf8');
         process.stdin.on('data', (data: string) => {
+            // `ensure kecore` typed by hand does the same damage as any other way of killing the
+            // framework VM under its live consumers, so it gets the ordered sweep too instead of
+            // reaching FXServer as written.
+            if (/^\s*(?:ensure|restart)\s+kecore\s*$/i.test(data)) {
+                buildManager.reloadFramework().catch((error: Error) => {
+                    log(`Error reloading the framework: ${error.message}`, { resourceColor: chalk.red });
+                });
+                return;
+            }
             serverManager.childProcess?.stdin?.write(data);
         });
 

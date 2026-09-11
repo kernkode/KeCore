@@ -14,7 +14,7 @@ Welcome to the official documentation for **KeCore**, the core framework powerin
 
 - **Consumer Resources**: Declare `@kecore/init.lua` in their `shared_scripts` to access the global `kec` object.
 - **Internal Structure**:
-  - `internal/`: Contains editable source code used during development.
-  - `performance/`: Contains generated bundle/distribution code. (Run `bun run gen:performance` after modifying `internal/`).
+  - `internal/modules/`: canonical consumer-local modules. The same Lua files run inside kecore and every consumer; `manifest.lua` owns side and load order.
+  - Other `internal/` files: singleton/runtime internals loaded only by kecore (events/RPC, registries, NUI and audio).
 - **Global Shared State**:
   - `kec.state`: Shared table for storing cross-script state variables without polluting `_G`.

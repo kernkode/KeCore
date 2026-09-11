@@ -1,29 +1,20 @@
 -- ------------------------------------------------------------
--- Estado compartido ENTRE RECURSOS. La implementación entera está en
--- internal/shared/state.lua (ahí está el por qué), y aquí se compila la copia generada: la
--- MISMA que carga @kecore/init.lua en cada consumidor, así que no hay dos versiones que puedan
--- divergir. Se lee de performance/ y no de internal/ porque en cliente solo existen los
--- ficheros que el manifiesto declara, y `files { "performance/**.lua" }` los baja todos.
---
--- Un recurso que arranque tarde se siembra con exports.kecore:stateSnapshot().
+-- Estado compartido ENTRE RECURSOS. La fábrica vive en un único archivo que también carga
+-- @kecore/init.lua en cada consumidor; así cada VM conserva su propia tabla y metatabla sin un
+-- árbol generado intermedio.
 -- ------------------------------------------------------------
-local STATE_CHUNK = "performance/shared/state.lua"
+local function loadChunk(path, ...)
+    local chunk = LoadResourceFile("kecore", path)
+    if not chunk then error("[kecore] falta " .. path) end
 
-local function loadStateFactory()
-    local chunk = LoadResourceFile(GetCurrentResourceName(), STATE_CHUNK)
-    if not chunk then
-        error("[kecore] falta " .. STATE_CHUNK .. " — corre `bun run gen:performance`")
-    end
+    local compiled, err = load(chunk, "@@kecore/" .. path)
+    if not compiled then error("[kecore] " .. path .. " no compila: " .. tostring(err)) end
 
-    local factory, err = load(chunk, STATE_CHUNK)
-    if not factory then
-        error("[kecore] " .. STATE_CHUNK .. " no compila: " .. tostring(err))
-    end
-
-    return factory()
+    return compiled(...)
 end
 
-local stateObj = loadStateFactory()()
+local stateFactory = loadChunk("internal/modules/shared/state.lua")
+local stateObj = stateFactory(nil, "kecore")
 
 exports('stateSnapshot', function() return stateObj:snapshot() end)
 

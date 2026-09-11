@@ -1,8 +1,8 @@
 --[[
     Registro central de schemas de MongoDB.
 
-    Este archivo vive SOLO dentro del recurso kecore (no se transpila a
-    performance/): la tabla `registry` de aquí es la única copia real. Los
+    Este archivo vive SOLO dentro del recurso kecore: la tabla `registry` de aquí es la
+    única copia real. Los
     consumidores llegan a estas funciones como refs de la tabla base que
     entrega `exports.kecore:get()`, así cualquier recurso puede registrar un
     schema y cualquier otro puede importarlo por nombre.
@@ -21,7 +21,7 @@ local registry = {}
 ---@param name string
 ---@param definition table { collection = string, schema = tabla zod, defaults = table? }
 ---@return string|nil error
-function kec.mongoSchemaRegister(name, definition)
+kec.mongoSchemaRegister = function(name, definition)
     if type(name) ~= "string" or name == "" then
         return "schema sin nombre válido"
     end
@@ -42,6 +42,6 @@ end
 --- Devuelve la definición registrada bajo `name`, o nil si no existe.
 ---@param name string
 ---@return table|nil
-function kec.mongoSchemaGet(name)
+kec.mongoSchemaGet = function(name)
     return registry[name]
 end

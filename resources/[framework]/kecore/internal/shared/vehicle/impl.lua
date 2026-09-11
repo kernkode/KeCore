@@ -1,5 +1,11 @@
 --- #Statics Functions
 
+-- El namespace se crea aquí y no en un módulo: estos archivos son shared_scripts y corren ANTES de
+-- que se carguen los módulos (el catálogo de vehículos incluido), así que nadie lo ha creado
+-- todavía. Lo creaba la lista de modelos cuando vivía aquí al lado; al mudarse a
+-- internal/modules/shared/vehicle/models.lua, el hueco se quedó para el primero que llega.
+kec.vehicle = kec.vehicle or {}
+
 --- Checks if the model is valid
 ---@param model integer | string
 ---@return boolean
@@ -12,8 +18,9 @@ function kec.vehicle:isValidModel(model)
         modelHash = model
     end
 
-    -- Verificar si el hash existe en nuestra tabla
-    return kec.vehicle.modelHashes[modelHash] == true
+    -- El catálogo ES la respuesta (internal/modules/shared/vehicle/models.lua): un modelo que no
+    -- esté ahí no existe para el servidor, aunque el dump del juego lo traiga.
+    return kec.vehicle.models[modelHash] ~= nil
 end
 
 --- State bag names used by the vehicle system.

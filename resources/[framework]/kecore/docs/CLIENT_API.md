@@ -65,7 +65,7 @@ kec.label2d:showText("Notice", {
 ```
 
 One notice at a time: a new one replaces the previous. The module lives once in
-`internal/client/label2d_nui.lua` (never transpiled into `performance/`); other resources reach it
+`internal/client/label2d_nui.lua` (outside the consumer-local module catalog); other resources reach it
 through its export, which `@kecore/init.lua` wraps back into `kec.label2d`. Defaults live in the
 `DEFAULTS` table of that file.
 
