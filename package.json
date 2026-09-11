@@ -13,27 +13,23 @@
     "update:enhanced": "bun scripts/update.ts enhanced",
     "update": "bun scripts/update.ts recommended",
     "update:core": "bun scripts/updateCore.ts",
-    "tools:weapon-meta": "python scripts/tools/extract-weapon-metas.py",
-    "tools:webp": "bun scripts/tools/webp-assets.ts",
     "ui:kecore": "cd 'resources/[framework]/kecore/svelte-src' && bun run build",
     "update:version": "bun scripts/update.ts",
     "postinstall": "bun scripts/update.ts recommended"
   },
   "dependencies": {
-    "@citizenfx/server": "^2.0.14862-1",
     "7zip-min": "^2.1.0",
+    "@citizenfx/server": "^2.0.14862-1",
     "bcryptjs": "^3.0.3",
     "chalk": "^5.6.2",
     "cheerio": "^1.2.0",
     "fkill": "^9.0.0",
-    "mongodb": "^7.6.0",
-    "typescript": "^5.9.3"
+    "mongodb": "^7.6.0"
   },
   "devDependencies": {
     "@types/bun": "^1.4.2",
     "@types/node": "^24.13.3",
     "chokidar": "^4.0.3",
-    "esbuild": "^0.25.12",
-    "wasmoon": "^1.16.0"
+    "esbuild": "^0.25.12"
   }
 }
