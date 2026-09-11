@@ -13,13 +13,6 @@ interface SyncFolder {
     local: string;   // Path destino en disco
 }
 
-// No es una carpeta, pero pasa por el mismo camino: el filtro acepta tanto un prefijo como el
-// path exacto de un archivo suelto.
-const PACKAGE_JSON: SyncFolder = {
-    remote: 'package.json',
-    local: './package.json'
-};
-
 const SYNC_FOLDERS: SyncFolder[] = [
     {
         remote: 'resources/[framework]/kecore',
@@ -29,11 +22,9 @@ const SYNC_FOLDERS: SyncFolder[] = [
         remote: 'scripts',
         local: './scripts'
     },
-    PACKAGE_JSON,
 ];
 
-/** Lo enciende `downloadFile` cuando el que acaba de bajar es el package.json. */
-let needsInstall = false;
+const PACKAGE_JSON = './package.json';
 
 // ─── Tipos ───────────────────────────────────────────────
 interface TreeItem {
@@ -119,15 +110,13 @@ function filterTreeToFolder(tree: TreeItem[], folder: SyncFolder): FileInfo[] {
     const prefix = folder.remote.endsWith('/') ? folder.remote : folder.remote + '/';
 
     return tree
-        // El blob cuyo path es exactamente el de la entrada es la entrada misma (package.json): un
-        // elemento de la carpeta nunca lo cumple, porque las carpetas no son blobs.
-        .filter(item => item.type === 'blob' && (item.path === folder.remote || item.path.startsWith(prefix)))
+        .filter(item => item.type === 'blob' && item.path.startsWith(prefix))
         .map(item => {
-            const relativePath = item.path === folder.remote ? '' : item.path.substring(prefix.length);
+            const relativePath = item.path.substring(prefix.length);
 
             return {
                 remotePath: item.path,
-                localPath: relativePath ? path.join(folder.local, relativePath) : folder.local,
+                localPath: path.join(folder.local, relativePath),
                 sha: item.sha,
                 size: item.size || 0,
                 downloadUrl: `https://raw.githubusercontent.com/${GITHUB_USER}/${GITHUB_REPO}/${BRANCH}/${item.path}`
@@ -142,15 +131,63 @@ async function downloadFile(url: string, filePath: string): Promise<void> {
 
     // Bun.write crea los directorios que falten y escribe el cuerpo tal cual.
     await Bun.write(filePath, response);
-
-    if (filePath === PACKAGE_JSON.local) needsInstall = true;
 }
 
-// ─── Instalar dependencias ───────────────────────────────
-/** `bun install` en la raíz: deja node_modules y bun.lock a juego con el package.json bajado. */
-async function installPackages(): Promise<void> {
-    console.log(chalk.cyan('\n📦 package.json cambió — bun install\n'));
+// ─── Dependencias ────────────────────────────────────────
+type Deps = Record<string, string>;
 
+/** Pone en `local` las versiones de `remote`, y devuelve una línea por cada una que cambió. */
+function mergeDeps(local: Deps, remote: Deps): string[] {
+    const changed: string[] = [];
+
+    for (const [name, version] of Object.entries(remote)) {
+        if (local[name] === version) continue;
+
+        changed.push(`${name}  ${local[name] ?? '(nuevo)'} → ${version}`);
+        local[name] = version;
+    }
+
+    return changed;
+}
+
+/**
+ * Las dependencias del repo, metidas en el package.json de aquí.
+ *
+ * Solo esos dos bloques, y no el archivo entero: cada repo tiene sus propios scripts (los `ui:*`
+ * de cada recurso, las rutas de las herramientas) y sus propias dependencias, así que bajarlo
+ * encima se las llevaría por delante. Lo que solo existe aquí se queda como está; de lo que está
+ * en los dos, manda la versión del repo.
+ */
+async function syncDependencies(): Promise<void> {
+    console.log(chalk.blue.bold(`\n┌─ 📦 package.json`));
+    console.log(chalk.blue(`│  → dependencies + devDependencies`));
+
+    const response = await fetch(`https://raw.githubusercontent.com/${GITHUB_USER}/${GITHUB_REPO}/${BRANCH}/package.json`);
+    if (!response.ok) throw new Error(`package.json respondió ${response.status}`);
+
+    const remote = await response.json() as { dependencies?: Deps, devDependencies?: Deps };
+    const local = await Bun.file(PACKAGE_JSON).json();
+
+    local.dependencies = local.dependencies ?? {};
+    local.devDependencies = local.devDependencies ?? {};
+
+    const changed = [
+        ...mergeDeps(local.dependencies, remote.dependencies ?? {}),
+        ...mergeDeps(local.devDependencies, remote.devDependencies ?? {}),
+    ];
+
+    if (changed.length === 0) {
+        console.log(chalk.gray(`    ✅ [INTACT]       nothing to update`));
+        console.log(chalk.blue(`└─ ✅ up to date`));
+        return;
+    }
+
+    for (const line of changed) console.log(chalk.yellow(`    🔄 [UPDATING]  ${line}`));
+    await Bun.write(PACKAGE_JSON, JSON.stringify(local, null, 2) + '\n');
+
+    // `install` y no `update`: install se ciñe a lo que pide el package.json, mientras que update
+    // sube además todos los rangos y reescribe el lock, dejando cada máquina en otras versiones.
+    console.log(chalk.blue(`└─ 📦 bun install\n`));
     const proc = Bun.spawn(['bun', 'install'], { stdout: 'inherit', stderr: 'inherit' });
     const code = await proc.exited;
 
@@ -250,9 +287,8 @@ async function main(): Promise<void> {
             console.log(chalk.blue(`└─ ✅ ${folderStats.intact} intact | 🔄 ${folderStats.updated} Updated | 📥 ${folderStats.new} new`));
         }
 
-        // ③ El package.json del repo manda también sobre lo instalado: si acaba de bajar, los
-        // paquetes tienen que seguirlo.
-        if (needsInstall) await installPackages();
+        // ③ Las dependencias del repo, que no van por el árbol: se fusionan, no se pisan.
+        await syncDependencies();
 
         // ④ Resumen global
         console.log(chalk.green.bold(`
