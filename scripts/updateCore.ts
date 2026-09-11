@@ -178,16 +178,15 @@ async function syncDependencies(): Promise<void> {
 
     if (changed.length === 0) {
         console.log(chalk.gray(`    ✅ [INTACT]       nothing to update`));
-        console.log(chalk.blue(`└─ ✅ up to date`));
-        return;
+    } else {
+        for (const line of changed) console.log(chalk.yellow(`    🔄 [UPDATING]  ${line}`));
+        await Bun.write(PACKAGE_JSON, JSON.stringify(local, null, 2) + '\n');
     }
 
-    for (const line of changed) console.log(chalk.yellow(`    🔄 [UPDATING]  ${line}`));
-    await Bun.write(PACKAGE_JSON, JSON.stringify(local, null, 2) + '\n');
-
-    // Los dos, en este orden. `install` deja exactamente lo que pide el package.json recién
-    // fusionado; `update` sube después lo que quepa en los rangos, que es la única forma de mover
-    // los transitivos —undici, saslprep y compañía— porque no están declarados en ninguna parte.
+    // Los dos, en este orden y siempre. `install` deja exactamente lo que pide el package.json
+    // recién fusionado; `update` sube después lo que quepa en los rangos, que es la única forma de
+    // mover los transitivos —undici, saslprep y compañía— porque no están declarados en ninguna
+    // parte. Aunque aquí no cambie nada, el repo de GitHub puede haber subido alguno.
     console.log(chalk.blue(`└─ 📦 bun install + bun update\n`));
 
     if (await run('bun', 'install')) await run('bun', 'update');
