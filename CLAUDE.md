@@ -19,7 +19,7 @@ bun run dev                # the whole environment (see startup order below)
 bun run gen:performance    # regenerate performance/ from internal/  — required after editing internal/
 bun run update             # download/extract FXServer artifact (recommended channel)
 bun run update:latest      # ...latest channel;  bun run update:version <build> for a pinned build
-bun run update:core        # pull kecore/ + scripts/ from GitHub main, comparing git SHAs — OVERWRITES local files
+bun run update:core        # pull kecore/, scripts/ + package.json from GitHub main by git SHA — OVERWRITES local files, and runs `bun install` when package.json moved
 ```
 
 NUI (the `kec.label2d` overlay) is a separate Svelte app, built by hand:

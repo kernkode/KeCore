@@ -13,6 +13,13 @@ interface SyncFolder {
     local: string;   // Path destino en disco
 }
 
+// No es una carpeta, pero pasa por el mismo camino: el filtro acepta tanto un prefijo como el
+// path exacto de un archivo suelto.
+const PACKAGE_JSON: SyncFolder = {
+    remote: 'package.json',
+    local: './package.json'
+};
+
 const SYNC_FOLDERS: SyncFolder[] = [
     {
         remote: 'resources/[framework]/kecore',
@@ -22,7 +29,11 @@ const SYNC_FOLDERS: SyncFolder[] = [
         remote: 'scripts',
         local: './scripts'
     },
+    PACKAGE_JSON,
 ];
+
+/** Lo enciende `downloadFile` cuando el que acaba de bajar es el package.json. */
+let needsInstall = false;
 
 // ─── Tipos ───────────────────────────────────────────────
 interface TreeItem {
@@ -108,13 +119,15 @@ function filterTreeToFolder(tree: TreeItem[], folder: SyncFolder): FileInfo[] {
     const prefix = folder.remote.endsWith('/') ? folder.remote : folder.remote + '/';
 
     return tree
-        .filter(item => item.type === 'blob' && item.path.startsWith(prefix))
+        // El blob cuyo path es exactamente el de la entrada es la entrada misma (package.json): un
+        // elemento de la carpeta nunca lo cumple, porque las carpetas no son blobs.
+        .filter(item => item.type === 'blob' && (item.path === folder.remote || item.path.startsWith(prefix)))
         .map(item => {
-            const relativePath = item.path.substring(prefix.length);
+            const relativePath = item.path === folder.remote ? '' : item.path.substring(prefix.length);
 
             return {
                 remotePath: item.path,
-                localPath: path.join(folder.local, relativePath),
+                localPath: relativePath ? path.join(folder.local, relativePath) : folder.local,
                 sha: item.sha,
                 size: item.size || 0,
                 downloadUrl: `https://raw.githubusercontent.com/${GITHUB_USER}/${GITHUB_REPO}/${BRANCH}/${item.path}`
@@ -129,6 +142,19 @@ async function downloadFile(url: string, filePath: string): Promise<void> {
 
     // Bun.write crea los directorios que falten y escribe el cuerpo tal cual.
     await Bun.write(filePath, response);
+
+    if (filePath === PACKAGE_JSON.local) needsInstall = true;
+}
+
+// ─── Instalar dependencias ───────────────────────────────
+/** `bun install` en la raíz: deja node_modules y bun.lock a juego con el package.json bajado. */
+async function installPackages(): Promise<void> {
+    console.log(chalk.cyan('\n📦 package.json cambió — bun install\n'));
+
+    const proc = Bun.spawn(['bun', 'install'], { stdout: 'inherit', stderr: 'inherit' });
+    const code = await proc.exited;
+
+    if (code !== 0) console.log(chalk.red(`⚠️  bun install salió con ${code}`));
 }
 
 // ─── Procesar cada archivo ───────────────────────────────
@@ -225,7 +251,11 @@ async function main(): Promise<void> {
             console.log(chalk.blue(`└─ ✅ ${folderStats.intact} intact | 🔄 ${folderStats.updated} Updated | 📥 ${folderStats.new} new`));
         }
 
-        // ③ Resumen global
+        // ③ El package.json del repo manda también sobre lo instalado: si acaba de bajar, los
+        // paquetes tienen que seguirlo.
+        if (needsInstall) await installPackages();
+
+        // ④ Resumen global
         console.log(chalk.green.bold(`
             ╔════════════════════════════════════════════════════╗
             ║  🚀 ¡Synchronization complete!                     ║
